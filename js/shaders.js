@@ -2,10 +2,11 @@
 // atmospheric tint. Every material writes a normal code into alpha for the ink edge pass.
 import * as THREE from 'three';
 // Shared uniforms: owned by the vendored terrain module (its weather writes sky / fog / light / rain). Same keys as before.
-import { U } from './terrain/comic.js';
+import { U, HAZE } from './terrain/comic.js';
 export { U };
 export const COMIC = /* glsl */`
-uniform vec3 uSun; uniform vec3 uHorizon; uniform float uPx; uniform float uHatch; uniform float uFar; uniform float uTime; uniform float uFogY;
+uniform vec3 uSun; uniform vec3 uHorizon; uniform float uPx; uniform float uHatch; uniform float uFar; uniform float uTime; uniform float uFogY; uniform float uNight;
+` + HAZE + /* glsl */`
 float fogD(vec3 wpos){ vec3 d = wpos - cameraPosition; d.y *= uFogY; return length(d); }
 uniform vec3 uLight; uniform float uAmb, uRim, uHeadK; uniform vec3 uHeadP, uHeadD;
 vec3 headLight(vec3 al, vec3 N, vec3 wpos){ // two-beam cone from the car, hard comic falloff
@@ -37,7 +38,7 @@ vec3 comic(vec3 albedo, vec3 N, vec3 wpos, float hatchK){
   float ndv = dot(N, V);
   col = mix(col, vec3(0.04, 0.03, 0.05), (1.0 - smoothstep(0.06, 0.11, ndv)) * (1.0 - smoothstep(0.7, 0.9, abs(N.y))) * (1.0 - smoothstep(40.0, 160.0, dist)) * uRim); // not on flat ground
   float f = smoothstep(uFar * 0.2, uFar, fogD(wpos));
-  return mix(col, uHorizon, f * f * 0.95);
+  return mix(col, hazeAt(wpos), f * f * 0.95);
 }
 float ncode(vec3 N){ vec3 v = normalize(mat3(viewMatrix) * N); return 0.08 + 0.84 * (0.5 + 0.5 * dot(v, vec3(0.42, 0.55, 0.72))); }
 `;
@@ -114,7 +115,7 @@ export function waterMat({ far = false, uNear = null } = {}) { // far: engine fa
         c = mix(c, vec3(.97,1.,1.), foam);
         float dist = fogD(vW); float f = smoothstep(uFar*0.2, uFar, dist);
         c *= uLight; c += uHeadK * headLight(c, vec3(0.,1.,0.), vW);
-        gl_FragColor = vec4(mix(c, uHorizon, f*f*0.95), ncode(vec3(0.,1.,0.)) + foam * 0.04);
+        gl_FragColor = vec4(mix(c, hazeAt(vW), f*f*0.95), ncode(vec3(0.,1.,0.)) + foam * 0.04);
       }` });
 }
 // ---------------- objects (vertex coloured, optional instancing, wind, unlit, hull) ----------------
@@ -209,7 +210,7 @@ export function puffMat() {
         vec2 g = fract(gl_FragCoord.xy / (uPx * 4.)) - 0.5; if (r > 0.55 && length(g) > 0.62 * (1. - r) + 0.12) discard;
         vec3 N = normalize(vec3(p.x, -p.y, sqrt(1. - r))); N = normalize(inverse(mat3(viewMatrix)) * N);
         float l = dot(N, uSun); vec3 c = vC * (l > 0.1 ? 1.0 : 0.8) * uLight; float dist = fogD(vW); float f = smoothstep(uFar*0.2, uFar, dist);
-        gl_FragColor = vec4(mix(c, uHorizon, f*f), ncode(N)); }` });
+        gl_FragColor = vec4(mix(c, hazeAt(vW), f*f), ncode(N)); }` });
 }
 // ---------------- flat dark decal (skids, blob shadow) ----------------
 export function decalMat(col, dots = false) {
@@ -223,15 +224,15 @@ export function decalMat(col, dots = false) {
           vec2 g = fract(gl_FragCoord.xy / (uPx * 5.)) - 0.5; if (length(g) > 0.5 * (1. - r * 0.8) + 0.08) discard;
         #endif
         float dist = fogD(vW); float f = smoothstep(uFar*0.2, uFar, dist);
-        gl_FragColor = vec4(mix(uCol, uHorizon, f*f), ncode(vec3(0.,1.,0.)) ); }` });
+        gl_FragColor = vec4(mix(uCol, hazeAt(vW), f*f), ncode(vec3(0.,1.,0.)) ); }` });
 }
 // ---------------- post: ink edges (depth laplacian + normal code), posterize, halftone, grain, speed lines ----------------
 export function postMat() {
   return new THREE.ShaderMaterial({ depthTest: false, depthWrite: false,
     uniforms: { tCol: { value: null }, tDep: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uN: { value: 0.5 }, uF: { value: 1200 },
-      uThick: { value: 1 }, uTime: U.uTime, uBoost: { value: 0 }, uFx: { value: 1 }, uPx: U.uPx },
+      uThick: { value: 1 }, uTime: U.uTime, uBoost: { value: 0 }, uFx: { value: 1 }, uPx: U.uPx, uFar: U.uFar },
     vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
-    fragmentShader: `uniform sampler2D tCol, tDep; uniform vec2 uRes; uniform float uN, uF, uThick, uTime, uBoost, uFx, uPx; varying vec2 vUv;
+    fragmentShader: `uniform sampler2D tCol, tDep; uniform vec2 uRes; uniform float uN, uF, uThick, uTime, uBoost, uFx, uPx, uFar; varying vec2 vUv;
       float lin(vec2 uv){ float z = texture2D(tDep, uv).x * 2. - 1.; return 2. * uN * uF / (uF + uN - z * (uF - uN)); }
       float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
       void main(){
@@ -247,10 +248,12 @@ export function postMat() {
         float en = smoothstep(0.03, 0.06, na);
         float e = max(ed, en) * (1. - 0.8 * smoothstep(90., 450., dc));
         float amin = min(min(min(al, ar), min(ad, au)), a0); e *= mix(1., 0.04, step(amin, 0.03)); // grass (alpha 0) gets only faint ink
+        float amax = max(max(max(al, ar), max(ad, au)), a0);
+        e *= 1. - step(0.985, amax) * smoothstep(0.3, 0.75, mn / uFar);  // no ink where hazy far terrain meets the sky (alpha 1 = sky)
         vec3 c = c0.rgb;
         float L = dot(c, vec3(.299,.587,.114));
         c = mix(vec3(L), c, 1.18);                                      // saturate
-        float gk = step(a0, 0.03);                                       // grass pixel (alpha 0): keep its smooth engine-style gradient
+        float gk = max(step(a0, 0.03), step(0.985, a0));                 // grass (alpha 0) / sky (alpha 1): keep their smooth gradients
         c = mix(c, floor(c * 6. + 0.5) / 6., 0.5 * (1. - gk));           // slight posterize (not on grass)
         if (uFx > 0.5) {
           vec2 g = gl_FragCoord.xy / (uPx * 4.); g = mat2(.707,-.707,.707,.707) * g; vec2 f = fract(g) - 0.5;

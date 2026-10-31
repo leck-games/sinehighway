@@ -18,7 +18,19 @@ export const U = {
   uWetT: { value: dtex(2, 2, new Uint8Array(16)) }, uWetO: { value: new THREE.Vector4(-1e5, -1e5, 2e5, 0) },
   uFireT: { value: dtex(2, 2, new Uint8Array(16)) }, uFireO: { value: new THREE.Vector4(-1e5, -1e5, 1, 0) }, // origin xz, size, valid
   uFlash: { value: 0 },
+  // atmosphere (weather.js sets the sun; the host may grade them): true sun direction for the sky disc + glow (uSun = light dir,
+  // clamped above the horizon, moon at night), warm sun/glow colour, haze strength 0..1, high cirrus amount (0 = off, cheap path)
+  uSunD: { value: new THREE.Vector3(0.45, 0.75, 0.35).normalize() }, uSunCol: { value: new THREE.Color(1, 0.86, 0.62) }, uHaze: { value: 0.6 }, uCirrus: { value: 0 },
 };
+// Horizon / fog colour along a view direction: base horizon + warm sun-side glow (strongest with a low sun, afterglow just below the
+// horizon). The sky dome and every fog mix use it, so distant terrain fades exactly into the sky behind it (FUEL-style haze).
+export const HAZE = /* glsl */`
+uniform vec3 uSunD, uSunCol; uniform float uHaze;
+vec3 hazeCol(vec3 d){ float s = max(dot(d, uSunD), 0.); float low = 1. - smoothstep(0.05, 0.7, uSunD.y);
+  float g = (s * s * s * (0.16 + 0.30 * low) + pow(s, 12.) * (0.22 + 0.38 * low)) * (1. - uNight) * smoothstep(-0.3, 0.0, uSunD.y) * (0.45 + 0.55 * uHaze);
+  return mix(uHorizon, uSunCol, min(g, 0.85)); }
+vec3 hazeAt(vec3 wpos){ return hazeCol(normalize(wpos - cameraPosition)); }
+`;
 // JS twin of the GLSL cloud noise (keep in sync) -> used for rain at a point, fire extinguish, cloud placement
 const S = Math.sin, C = Math.cos;
 export function cnoise(u, v) {
@@ -38,7 +50,7 @@ vec3 fireAt(vec2 xz){ vec2 d = xz - uFireO.xy; if (uFireO.w < 0.5 || d.x < 0. ||
 export const COMIC = /* glsl */`
 uniform vec3 uSun; uniform vec3 uHorizon; uniform vec3 uZenith; uniform float uPx; uniform float uHatch; uniform float uFar; uniform float uTime; uniform float uFogY; uniform float uDet;
 uniform vec3 uLight; uniform float uAmb, uRim, uHeadK, uNight, uRain; uniform vec3 uHeadP, uHeadD;
-` + GLSL_ENV + /* glsl */`
+` + HAZE + GLSL_ENV + /* glsl */`
 vec3 headLight(vec3 al, vec3 N, vec3 wpos){
   vec3 d = wpos - uHeadP; float r = length(d); d /= max(r, 0.001);
   float c = dot(d, uHeadD); float cone = smoothstep(0.86, 0.9, c); float fall = 1.0 - smoothstep(25.0, 75.0, r);
@@ -56,7 +68,7 @@ float cloudShadow(vec3 w){ // halftone-edged cloud shadow mask 0..1
 }
 float hatchLine(float c, float w){ float d = abs(fract(c) - 0.5) * 2.0; return 1.0 - smoothstep(w, w + 0.12, 1.0 - d); }
 float fogD(vec3 wpos){ vec3 d = wpos - cameraPosition; d.y *= uFogY; return length(d); }
-vec3 fogMix(vec3 col, vec3 wpos, float k){ float dist = fogD(wpos); float f = smoothstep(uFar * 0.2 * k, uFar * k, dist); return mix(col, uHorizon, f * f); }
+vec3 fogMix(vec3 col, vec3 wpos, float k){ float dist = fogD(wpos); float f = smoothstep(uFar * 0.2 * k, uFar * k, dist); return mix(col, hazeAt(wpos), f * f); }
 vec3 comicL(vec3 albedo, vec3 N, vec3 wpos, float hatchK, float shade){
   vec3 V = normalize(cameraPosition - wpos);
   float l = (dot(N, uSun) * 0.5 + 0.5) * (1.0 - 0.45 * shade);
@@ -221,17 +233,31 @@ export function roadMat(map, { offset = -2, col = 0x9a9aa2 } = {}) {
         c = wetShade(c, N, vW, wetAt(vW.xz));
         gl_FragColor = vec4(comic(c, N, vW, hk), ncode(N)); }` });
 }
-// sky: posterized gradient, comic sun/moon/stars; overcast darkening from local cloud cover (uRain)
+// sky: smooth dithered gradient dome (horizon haze band -> zenith), warm sun disc + glow, optional drifting cirrus,
+// comic moon/stars at night, overcast darkening from local cloud cover (uRain). Writes alpha 1.0 = "sky" for the post pass.
 export function skyMat() {
   return new THREE.ShaderMaterial({ uniforms: U, side: THREE.BackSide, depthWrite: false,
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = (projectionMatrix * modelViewMatrix * vec4(position,1.)).xyww; }`,
-    fragmentShader: `uniform vec3 uSun, uHorizon, uZenith, uLight; uniform float uTime, uNight, uRain, uFlash; varying vec3 vD;
+    fragmentShader: `uniform vec3 uSun, uHorizon, uZenith, uLight; uniform float uTime, uNight, uRain, uFlash, uCirrus;` + HAZE + `varying vec3 vD;
       float h31(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+      float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+      float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+        return mix(mix(h21(i), h21(i + vec2(1., 0.)), f.x), mix(h21(i + vec2(0., 1.)), h21(i + vec2(1., 1.)), f.x), f.y); }
       void main(){
         vec3 d = normalize(vD); float y = max(d.y, 0.);
-        float t = floor(pow(y, 0.55) * 6. + 0.5) / 6.;
-        vec3 c = mix(uHorizon, uZenith, t);
-        float s = dot(d, uSun) * (1. - uNight);
+        vec3 hz = hazeCol(d);
+        float t = 1. - pow(1. - y, 2.0 + 2.6 * (1. - uHaze));              // smooth horizon -> zenith (more haze = wider pale band)
+        vec3 c = mix(hz, uZenith, t);
+        c = mix(c, mix(hz, vec3(1.), 0.18), exp(-y * 16.) * uHaze * 0.45); // bright haze band hugging the horizon
+        float sd = dot(d, uSunD), s = max(sd, 0.), day = 1. - uNight, sk = day * (1. - uRain * 0.85);
+        c = mix(c, uSunCol, pow(s, 4.) * 0.16 * sk);                       // broad sun-side warmth high in the sky
+        if (uCirrus > 0.001 && d.y > 0.015) {                               // soft stylised cirrus, slow drift (off on LOW)
+          vec2 uv = d.xz / (d.y + 0.1) * vec2(1.1, 2.6) + uTime * vec2(0.004, 0.0016);
+          float n = vn(uv * 1.7) * 0.62 + vn(uv * 4.3 + 7.1) * 0.38;
+          float m = smoothstep(0.5, 0.82, n) * smoothstep(0.015, 0.22, d.y) * uCirrus;
+          vec3 cc = mix(vec3(1.), uSunCol, 0.3 + 0.5 * pow(sd * 0.5 + 0.5, 6.)) * mix(vec3(1.), uLight, 0.85);
+          c = mix(c, mix(cc, vec3(.55,.58,.66) * uLight, uRain), m * 0.5 * mix(1., 0.35, uNight));
+        }
         if (uNight > 0.01) {
           vec3 g = floor(d * 140.); float st = step(0.996, h31(g)) * smoothstep(0.02, 0.2, d.y);
           c = mix(c, vec3(1., .97, .85), st * uNight * (1. - uRain));
@@ -239,12 +265,13 @@ export function skyMat() {
           c = mix(c, vec3(.06,.05,.08), step(0.9975, mo) * uNight);
           c = mix(c, vec3(.95,.95,.85) - step(0.9993, dot(d, normalize(uSun + vec3(.02,.02,0.)))) * 0.25, step(0.998, mo) * uNight);
         }
-        float sk = 1. - uRain * 0.85;
-        c = mix(c, vec3(1.,.95,.7), step(0.96, s) * 0.35 * sk);
-        c = mix(c, vec3(1.,.98,.85), step(0.99, s) * 0.5 * sk);
-        c = mix(c, vec3(.08,.06,.08), step(0.9965, s) * (1. - step(0.9975, s)) * sk);
-        c = mix(c, vec3(1.,.93,.45), step(0.9975, s) * sk);
+        // sun: soft halo + bright warm disc (smooth edge), fades out below the horizon and under cloud
+        float above = smoothstep(-0.01, 0.01, d.y);
+        c += uSunCol * (pow(s, 1200.) * 0.55 + pow(s, 140.) * 0.22) * sk * above;
+        vec3 disc = mix(vec3(1., .98, .9), uSunCol * vec3(1.05, .95, .8) + 0.15, 1. - smoothstep(0.05, 0.4, uSunD.y));
+        c = mix(c, disc, smoothstep(0.99955, 0.99972, sd) * sk * above);
         c += uFlash * 0.5;
+        c += (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 160.; // dither: no 8-bit banding
         gl_FragColor = vec4(c, 1.0);
       }` });
 }

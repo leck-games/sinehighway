@@ -11,7 +11,7 @@ const BIAS = { off: -2, auto: null, on: 0.45, storm: 1.25 };
 const CN = 64, CSZ = 4096, WN = 48, WS = 40, LAT = 100, CR = 1450;
 const C_DAY_H = new THREE.Color(0xd9f1ff), C_DAY_Z = new THREE.Color(0x1f74e0), C_DUSK_H = new THREE.Color(0xffad6e), C_DUSK_Z = new THREE.Color(0x4f4aa8),
   C_NIGHT_H = new THREE.Color(0x1d2b4e), C_NIGHT_Z = new THREE.Color(0x060a1c), L_DAY = new THREE.Color(1, 1, 1), L_DUSK = new THREE.Color(1.12, 0.8, 0.6), L_NIGHT = new THREE.Color(0.34, 0.4, 0.68),
-  C_RAIN = new THREE.Color(0x7d8aa0);
+  C_RAIN = new THREE.Color(0x7d8aa0), C_SUN_DAY = new THREE.Color(0xffe0b0), C_SUN_DUSK = new THREE.Color(0xff8436), C_SUN_NIGHT = new THREE.Color(0x56638f);
 const h1 = (a, b, k) => { const s = Math.sin(a * 127.1 + b * 311.7 + k * 74.7) * 43758.5453; return s - Math.floor(s); };
 
 export function createWeather({ heightAt, emit = () => {} } = {}) {
@@ -92,7 +92,7 @@ export function createWeather({ heightAt, emit = () => {} } = {}) {
           vec2 g = fract(gl_FragCoord.xy / (uPx * 5.)) - 0.5; float band = step(0.42, l) * (1. - step(0.64, l));
           c = mix(c, c * 0.82, step(length(g), 0.28) * band);
           c *= mix(vec3(1.), uLight, 0.9) + uFlash * 0.8; c += vec3(1., .5, .3) * uNight * 0.0;
-          float dist = length(vW - cameraPosition); c = mix(c, uHorizon, smoothstep(500., 1600., dist) * 0.75);
+          float dist = length(vW - cameraPosition); c = mix(c, hazeAt(vW), smoothstep(500., 1600., dist) * 0.75);
           gl_FragColor = vec4(c, ncode(N)); }` });
     cum = { mesh: new THREE.Mesh(bg, cm), g: bg, P: cP, S: cS }; cum.mesh.frustumCulled = false; scene.add(cum.mesh);
     // stratus/overcast deck (seen from below where it rains hard)
@@ -101,7 +101,7 @@ export function createWeather({ heightAt, emit = () => {} } = {}) {
       vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: COMIC + `varying vec3 vW; void main(){ float r = cloudRaw(vW.xz); if (r < 0.34) discard;
         vec3 c = r > 0.62 ? vec3(.36,.38,.45) : r > 0.46 ? vec3(.46,.49,.56) : vec3(.58,.61,.68); c = mix(c, vec3(.1,.1,.13), step(r, 0.37));
-        c *= mix(vec3(1.), uLight, 0.9) + uFlash; float dist = length(vW.xz - cameraPosition.xz); c = mix(c, uHorizon * 0.8, smoothstep(600., 1700., dist) * 0.8);
+        c *= mix(vec3(1.), uLight, 0.9) + uFlash; float dist = length(vW.xz - cameraPosition.xz); c = mix(c, hazeAt(vW) * 0.8, smoothstep(600., 1700., dist) * 0.8);
         if (dist > 1750.) discard; gl_FragColor = vec4(c, 0.3); }` });
     strat = new THREE.Mesh(sg, sm); strat.frustumCulled = false; scene.add(strat);
     // rain shafts: camera-facing hatched curtains under rain clouds
@@ -119,7 +119,7 @@ export function createWeather({ heightAt, emit = () => {} } = {}) {
           vec2 fc = gl_FragCoord.xy / uPx; float hatch = fract((fc.x * 0.9 + fc.y * 0.25 + uTime * 40. + vSd * 50.) / 7.);
           float g = fract(sin(dot(floor(fc / 2.), vec2(12.9, 78.2))) * 43758.5);
           if (hatch > 0.32 || g > dens * 1.1) discard;
-          vec3 c = vec3(.5,.55,.66) * (mix(vec3(1.), uLight, 0.9) + uFlash); c = mix(c, uHorizon, smoothstep(700., 1600., dist) * 0.6);
+          vec3 c = vec3(.5,.55,.66) * (mix(vec3(1.), uLight, 0.9) + uFlash); c = mix(c, hazeAt(vW), smoothstep(700., 1600., dist) * 0.6);
           gl_FragColor = vec4(c, 0.0); }` });
     shafts = { mesh: new THREE.Mesh(qg, qm), g: qg, A: sA, B: sB }; shafts.mesh.frustumCulled = false; scene.add(shafts.mesh);
     // near rain streaks
@@ -189,6 +189,8 @@ export function createWeather({ heightAt, emit = () => {} } = {}) {
     const day = sst(-0.1, 0.22, el), night = 1 - sst(-0.22, 0.0, el), dusk = day * (1 - sst(0.05, 0.42, el));
     if (el > -0.08) sunV.set(Math.cos(a) * 0.85, Math.max(el, 0.2), 0.5); else sunV.set(-Math.cos(a) * 0.85, Math.max(-el, 0.45), -0.5);
     U.uSun.value.copy(sunV.normalize());
+    U.uSunD.value.set(Math.cos(a) * 0.85, el, 0.5).normalize(); // true sun (sky disc + glow); uSun = light dir (kept >= ~12 deg, moon at night)
+    U.uSunCol.value.copy(C_SUN_NIGHT).lerp(C_SUN_DAY, sst(-0.25, 0.1, el)).lerp(C_SUN_DUSK, (1 - sst(0.05, 0.45, el)) * sst(-0.25, 0.0, el));
     const L = U.uLight.value.copy(L_NIGHT).lerp(L_DAY, day).lerp(L_DUSK, dusk);
     const Hc = U.uHorizon.value.copy(C_NIGHT_H).lerp(C_DAY_H, day).lerp(C_DUSK_H, dusk), Z = U.uZenith.value.copy(C_NIGHT_Z).lerp(C_DAY_Z, day).lerp(C_DUSK_Z, dusk * 0.8);
     const R = st.localRain, Cv = st.localCov; tmpC.copy(C_RAIN).multiply(L);

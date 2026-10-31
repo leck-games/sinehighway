@@ -429,12 +429,24 @@ for (let i = 0; i < precipN; i++) { const x = Math.random(), y = Math.random(), 
 const prGeo = new THREE.BufferGeometry(); prGeo.setAttribute('position', new THREE.BufferAttribute(prPos, 3)); prGeo.setAttribute('tail', new THREE.BufferAttribute(prTail, 1)); prGeo.setAttribute('seed', new THREE.BufferAttribute(prSeed, 1));
 const dustFx = new THREE.LineSegments(prGeo, precipMat()); dustFx.frustumCulled = false; dustFx.renderOrder = 5; scene.add(dustFx); // dust streaks only (rain = terrain)
 { const pm = dustFx.material.uniforms; pm.uCol.value.set(0xe8b878); pm.uVel.value.set(16, -1.5, 7); pm.uLen.value = 0.12; pm.uBox.value = 30; }
+// SKY presets (one select in WORLD): grade the time-of-day sky the terrain weather computes — horizon/zenith tint (fades out at night),
+// haze band + sun glow strength, fog distance, sun/glow colour, high cirrus. The sun position itself always follows TIME OF DAY.
+const SKY_P = { FUEL: { h: 0xf4dcb4, hk: 0.4, z: 0x3b7fd0, zk: 0.3, haze: 0.8, far: 0.92, cir: 1 },
+  Clear: { haze: 0.3, far: 1, cir: 0.5 },
+  Hazy: { h: 0xeee3cc, hk: 0.55, z: 0x86a9cc, zk: 0.5, haze: 1, far: 0.7, cir: 0.25 },
+  Golden: { h: 0xffbf86, hk: 0.55, z: 0x5a70bc, zk: 0.35, haze: 0.9, far: 0.88, cir: 1, sun: 0xff9a48, sk: 0.45, l: [1.06, 0.94, 0.8] } };
+let skyMode = QS.get('sky') || localStorage.getItem('sinerally_sky') || 'FUEL'; if (!SKY_P[skyMode]) skyMode = 'FUEL';
+const skyC = {}; for (const k in SKY_P) { const P = SKY_P[k]; skyC[k] = { h: P.h != null ? new THREE.Color(P.h) : null, z: P.z != null ? new THREE.Color(P.z) : null, sun: P.sun != null ? new THREE.Color(P.sun) : null }; }
+function skyGrade() { const P = SKY_P[skyMode], C = skyC[skyMode], d = 1 - U.uNight.value;
+  if (C.h) U.uHorizon.value.lerp(C.h, P.hk * d); if (C.z) U.uZenith.value.lerp(C.z, P.zk * d); if (C.sun) U.uSunCol.value.lerp(C.sun, P.sk * d);
+  if (P.l) U.uLight.value.multiply(tmpC.setRGB(1 + (P.l[0] - 1) * d, 1 + (P.l[1] - 1) * d, 1 + (P.l[2] - 1) * d));
+  U.uHaze.value = P.haze; U.uCirrus.value = qName === 'Low' ? 0 : P.cir * (qName === 'Med' ? 0.85 : 1); return P.far; }
 const tmpC = new THREE.Color(); let domT = 0, dryHere = false;
 function atmosphere(dt) { // runs after T.update(): overlay fog/dust on the terrain weather's uniforms
   if ((domT -= dt) <= 0) { domT = 1; sample(veh.p.x, veh.p.z, SO); dryHere = SO.dom === W.REG.DUNES || SO.dom === W.REG.CANYON; }
   let tgt = WXP[wxMode] ? wxMode : null;
   if (wxMode === 'Auto') { const slot = Math.floor(simT / 150), h = hash2(slot, 3, 31); tgt = h < 0.55 ? null : h < 0.72 ? (dryHere ? 'dust' : null) : h < 0.86 ? 'fog' : (dryHere ? 'dust' : null); }
-  let far = 1, grip = 1, dark = 1; const L = U.uLight.value, H = U.uHorizon.value, Z = U.uZenith.value;
+  let far = skyGrade(), grip = 1, dark = 1; const L = U.uLight.value, H = U.uHorizon.value, Z = U.uZenith.value;
   for (const k in wx) { wx[k] += ((k === tgt ? 1 : 0) - wx[k]) * Math.min(1, dt * 0.2); const P = WXP[k], w = wx[k];
     far *= 1 + (P.far - 1) * w; grip *= 1 + (P.grip - 1) * w; dark *= 1 + (P.dark - 1) * w;
     if (w > 0.001) { tmpC.copy(P.hz).multiply(L); H.lerp(tmpC, w * 0.85); Z.lerp(tmpC, w * 0.6); } }
@@ -574,6 +586,9 @@ function buildMenu() {
   const w = $('mWorld'); w.innerHTML = '';
   segRows(w, [['TIME OF DAY', ['Auto', 'Day', 'Sunset', 'Night'], () => timeMode, v => { timeMode = v; localStorage.setItem('sinerally_time', v); applyTime(); }],
     ['WEATHER', WX_MODES, () => wxMode, v => { wxMode = v; localStorage.setItem('sinerally_wx', v); applyWx(); }]]);
+  { const r = mk('div', 'mrow'); r.appendChild(mk('span', '', 'SKY')); const se = document.createElement('select'); se.id = 'mSky'; se.className = 'msel';
+    for (const k in SKY_P) { const o = document.createElement('option'); o.value = k; o.textContent = k.toUpperCase(); se.appendChild(o); } se.value = skyMode;
+    se.onchange = () => { skyMode = se.value; localStorage.setItem('sinerally_sky', skyMode); }; r.appendChild(se); w.appendChild(r); }
   actRow(w, 'SCENERY', [['🗺 OPEN MAP', () => { openMenu(false); openMap(true); }], ['🌲 REGROW TREES & ROCKS', () => { T.resetTrees(); afReclear(); hpMap.clear(); rockGone.clear(); store.set('sinerally_rocks_gone', []); scx = 1e9; msg('SCENERY REGROWN'); }], ['🔥 PUT OUT FIRES', () => { T.extinguishAll(); }]]);
   w.appendChild(mk('div', 'mnote', `Vistas found ${Object.keys(vFound).length} · fuel cans ${cansGot.size}`));
 }
