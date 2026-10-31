@@ -3,6 +3,7 @@
 let puppeteer; try { puppeteer = require('puppeteer-core'); } catch (e) { puppeteer = require('/workspace/scratch/ptest/node_modules/puppeteer-core'); }
 const SH = require('path').join(__dirname, '..', 'shots') + '/'; const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PORT = process.env.PORT || 18941, URL = `http://127.0.0.1:${PORT}/?q=med&dyn=0`;
+const VER = 'V' + require('fs').readFileSync(require('path').join(__dirname, '..', 'js', 'version.js'), 'utf8').match(/VERSION = '([^']+)'/)[1], VNAME = 'Sine Rally ' + VER; // expected version from js/version.js
 const res = {}; const ok = (k, v, info) => { res[k] = { pass: !!v, info }; console.log((v ? 'PASS ' : 'FAIL ') + k, info !== undefined ? JSON.stringify(info) : ''); };
 (async () => {
   const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'] });
@@ -21,8 +22,8 @@ const res = {}; const ok = (k, v, info) => { res[k] = { pass: !!v, info }; conso
   await p.goto(URL, { waitUntil: 'load' }); await E(() => localStorage.clear()); await p.reload({ waitUntil: 'load' }); await sleep(4500);
   const title = await p.title(); const man = await E(() => fetch('manifest.webmanifest').then(r => r.json()));
   const vl = await p.evaluate(() => ({ href: document.getElementById('versionsLink').href, tag: document.getElementById('verTag').textContent, st: window.__st && __st.version }));
-  ok('V0.1: menu tag + VERSIONS link to the version manager', vl.tag === 'V0.1' && vl.href === 'https://leck-games.github.io/versions/' && vl.st === 'Sine Rally V0.1', vl);
-  ok('title + manifest', title === 'Sine Rally V0.1' && man.name === 'Sine Rally V0.1' && /sinerally-ui/.test(man.start_url), { title, name: man.name, start_url: man.start_url });
+  ok(VER + ': menu tag + VERSIONS link to the version manager', vl.tag === VER && vl.href === 'https://leck-games.github.io/versions/' && vl.st === VNAME, vl);
+  ok('title + manifest', title === VNAME && man.name === VNAME && /sinerally-ui/.test(man.start_url), { title, name: man.name, start_url: man.start_url });
   const def = {}; for (const id of ['joy', 'bGas', 'bBst', 'bDrf', 'bBrk', 'mini', 'spdgrp', 'corner', 'gauge']) def[id] = await rect(id);
   let mv0 = await moved(1500); if (mv0 <= 1) { await sleep(3000); mv0 = await moved(1500); } ok('gameplay runs before edit', mv0 > 1, mv0); // retry once: cold swiftshader start can be slow
   // ---- open via ☰ → EDIT UI (touch taps)

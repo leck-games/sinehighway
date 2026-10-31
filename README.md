@@ -1,9 +1,14 @@
-# Sine Rally V0.1
+# Sine Rally V0.2-dev
 This is the first numbered release of Sine Rally. It is built on the finished [Sine Rally](https://github.com/leck-games/sinerally) prototype (frozen at b93c3b6).
-- Live (latest): **https://leck-games.github.io/sinerally-ui/**. It installs as the home-screen app "Sine Rally V0.1".
+- Live (latest): **https://leck-games.github.io/sinerally-ui/**. It installs as the home-screen app "Sine Rally V0.2-dev".
 - The frozen V0.1 copy, and every earlier build, are in the version manager at **https://leck-games.github.io/versions/** (repo [leck-games/versions](https://github.com/leck-games/versions)).
 - Release: git tag `v0.1`, plus a GitHub Release named "Sine Rally V0.1".
 - The version is set in `js/version.js`, which drives the page title and the menu tag. For a new release, bump it, update `index.html`/`manifest.webmanifest`, tag it, and add the build to the versions repo (see its README).
+
+## Atmosphere: FUEL-style sky (V0.2-dev, 2026-10-31)
+- The sky dome is a smooth procedural gradient from zenith to horizon, with a warm sun disc and halo, a horizon haze band, optional thin cirrus, and dithering against banding. It follows the existing day/night cycle: the sun really sets, and stars and moon come out at night.
+- Fog is view-dependent "haze" that uses the same horizon and sun-glow colour as the sky, so far terrain melts into the sky. The comic post pass skips the sky (no ink, posterize or halftone on it).
+- **WORLD → SKY** has one select with four presets: FUEL (default, warm haze), CLEAR, HAZY and GOLDEN. The choice is saved in localStorage. URL: `?sky=FUEL|Clear|Hazy|Golden`. The cirrus layer is off on LOW and reduced on MED.
 
 ## Trees: one comic LOD at every distance (2026-10-30)
 Trees now use the cel-shaded impostor cards (2 triangles per tree) at every distance; the high-poly near meshes are gone. The look matches

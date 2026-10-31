@@ -1,7 +1,7 @@
 {
- "name": "Sine Rally V0.1",
- "short_name": "Sine Rally V0.1",
- "description": "Sine Rally V0.1: open-world comic rally with a customizable touch HUD, planes, race rings and a 360° compass",
+ "name": "Sine Rally V0.2-dev",
+ "short_name": "Sine Rally V0.2-dev",
+ "description": "Sine Rally V0.2-dev: open-world comic rally with a customizable touch HUD, planes, race rings and a 360° compass",
  "id": "./?app=sinerally-ui",
  "start_url": "./?app=sinerally-ui",
  "scope": "./",
