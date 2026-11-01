@@ -1,6 +1,6 @@
 diff -ruN a/js/terrain/comic.js b/js/terrain/comic.js
 --- a/js/terrain/comic.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/comic.js	2026-11-01 19:31:47.653655782 +0100
++++ b/js/terrain/comic.js	2026-11-01 19:43:40.080201605 +0100
 @@ -18,7 +18,19 @@
    uWetT: { value: dtex(2, 2, new Uint8Array(16)) }, uWetO: { value: new THREE.Vector4(-1e5, -1e5, 2e5, 0) },
    uFireT: { value: dtex(2, 2, new Uint8Array(16)) }, uFireO: { value: new THREE.Vector4(-1e5, -1e5, 1, 0) }, // origin xz, size, valid
@@ -97,7 +97,7 @@ diff -ruN a/js/terrain/comic.js b/js/terrain/comic.js
  }
 diff -ruN a/js/terrain/ground.js b/js/terrain/ground.js
 --- a/js/terrain/ground.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/ground.js	2026-11-01 19:31:47.653655782 +0100
++++ b/js/terrain/ground.js	2026-11-01 19:43:40.080201605 +0100
 @@ -28,7 +28,10 @@
      const s = this.step, x = gi * s, z = gj * s, k = this.ri(gj) * this.n + this.ri(gi);
      sample(x, z, SO); normal(x, z, nv); const surf = surfaceOf(x, z, SO, nv[1]); colourOf(x, z, SO, nv[1], surf, cv);
@@ -112,7 +112,7 @@ diff -ruN a/js/terrain/ground.js b/js/terrain/ground.js
      this.CW[k] = (SO.h < 0.5 || SO.road > 0.05 || SO.riv < 8 || surf === 4 || surf === 5) ? 0 : Math.min(1, Math.max(0, (SO.bf * (0.42 + 0.5 * clump(x, z)) - 0.3) / 0.4));
 diff -ruN a/js/terrain/index.js b/js/terrain/index.js
 --- a/js/terrain/index.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/index.js	2026-11-01 19:31:47.653655782 +0100
++++ b/js/terrain/index.js	2026-11-01 19:43:40.080201605 +0100
 @@ -12,7 +12,7 @@
  const BASE_DRY = [0.86, 0.93, 0.22, 0.97, 0.82, 0.38];
  
@@ -133,18 +133,128 @@ diff -ruN a/js/terrain/index.js b/js/terrain/index.js
    function engineHot(d = {}) { const p = d.position || d; const k = Math.max(0, Math.min(1, d.intensity ?? 0.5)); if (Math.random() < k * 0.3) return fire.ignite(p.x, p.z, { radius: 1, cause: 'engine:hot' }); return 0; }
 diff -ruN a/js/terrain/trees.js b/js/terrain/trees.js
 --- a/js/terrain/trees.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/trees.js	2026-11-01 19:31:47.653655782 +0100
-@@ -110,6 +110,9 @@
++++ b/js/terrain/trees.js	2026-11-01 19:43:40.080201605 +0100
+@@ -9,6 +9,14 @@
+ export const SPECIES = ['conifer', 'broadleaf', 'acacia', 'scrub', 'cactus', 'dead'];
+ const SP = { CONIFER: 0, BROAD: 1, ACACIA: 2, SCRUB: 3, CACTUS: 4, DEAD: 5 };
+ const RADIUS = [0.45, 0.55, 0.35, 0.9, 0.45, 0.4];       // trunk collision radius at scale 1
++// Visual shapes (impostor silhouettes): 0-5 = the 6 species' own look, 6-11 = variants that keep their species' physics/burning.
++// 6 spruce (tall narrow conifer), 7 birch, 8 oak (broad), 9 poplar (columnar), 10 bush cluster (scrub), 11 bare tree (broadleaf)
++export const SHAPES = ['conifer', 'broadleaf', 'acacia', 'scrub', 'cactus', 'dead', 'spruce', 'birch', 'oak', 'poplar', 'bush', 'bare'];
++const SHAPE_SP = [0, 1, 2, 3, 4, 5, 0, 1, 1, 1, 3, 1];
++const SHH = [0, 0, 0, 0, 0, 0, 13.5, 10.2, 8.4, 13.0, 2.3, 8.0]; // card heights for the variants (0 = species geometry height)
++const SHW = [5.4, 6.6, 9.2, 3.2, 3.2, 2.4, 4.6, 5.4, 10.4, 3.6, 5.0, 6.4]; // card widths
++const SHSW = [0.6, 1, 1, 1, 0.1, 0.1, 0.45, 1.2, 0.8, 0.9, 0.5, 0.25]; // wind sway
++const SHC = [0x377a40, 0x558f37, 0x7b8a35, 0x8f9440, 0x3f8a48, 0x1c1714, 0x2b5f40, 0x86b04a, 0x4b7d2c, 0x62983a, 0x6f8e3c, 0x4a3d33];
+ const TC = 6;                                             // placement cell (m)
+ const KEY = (ci, cj) => (ci + 32768) * 65536 + (cj + 32768);
+ const unkey = id => [Math.floor(id / 65536) - 32768, (id % 65536) - 32768];
+@@ -93,6 +101,7 @@
+ const IMP_FS = COMIC + /* glsl */`
+   varying vec2 vUv; varying vec3 vW, vC, vR; varying float vSp, vHP, vBurn;
+   float circ(vec2 p, vec2 c, float r){ return step(length(p - c), r); }
++  float seg(vec2 p, vec2 a, vec2 b, float w){ vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0., 1.); return step(length(pa - ba * h), w); }
+   void main(){
+     vec2 p = vUv; float sp = vSp, fo = 0., tr = 0.; vec2 cn = vec2(0.5, 0.6); float rr = 0.4;
+     if (sp < 0.5) { tr = step(abs(p.x - .5), .045) * step(p.y, .3);
+@@ -105,12 +114,33 @@
+     else if (sp < 3.5) { vec2 q = (p - vec2(.5,.42)) / vec2(.5, .4); fo = step(dot(q,q), 1. - .12 * sin(atan(q.y,q.x) * 5.)); cn = vec2(.5,.42); }
+     else if (sp < 4.5) { fo = max(step(abs(p.x - .5), .09) * step(p.y, .95), max(step(abs(p.x - .78), .06) * step(.4, p.y) * step(p.y, .7), step(abs(p.x - .24), .06) * step(.5, p.y) * step(p.y, .78)));
+       fo = max(fo, step(abs(p.y - .42), .05) * step(.5, p.x) * step(p.x, .8)); }
+-    else { tr = step(abs(p.x - .5), .06 * (1. - p.y * .6)) * step(p.y, .95) + step(abs(p.y - .5 - (p.x - .5)), .025) * step(.5, p.x) * step(p.x, .75); }
++    else if (sp < 5.5) { tr = step(abs(p.x - .5), .06 * (1. - p.y * .6)) * step(p.y, .95) + step(abs(p.y - .5 - (p.x - .5)), .025) * step(.5, p.x) * step(p.x, .75); }
++    else if (sp < 6.5) { tr = step(abs(p.x - .5), .035) * step(p.y, .16); // spruce: 5 narrow tiers + spike
++      for (int k = 0; k < 5; k++) { float y0 = .1 + .165 * float(k), hw = (.46 - .075 * float(k)) * (1. - (p.y - y0) / .25); fo = max(fo, step(y0, p.y) * step(abs(p.x - .5), hw)); }
++      fo = max(fo, step(abs(p.x - .5), .02) * step(p.y, 1.)); cn = vec2(.5, .5); rr = .5; }
++    else if (sp < 7.5) { tr = step(abs(p.x - .5 - .03 * sin(p.y * 9.)), .045) * step(p.y, .62); // birch: white trunk, airy oval crown
++      vec2 q = (p - vec2(.5, .66)) / vec2(.34, .3); fo = step(dot(q, q), 1. - .18 * sin(atan(q.y, q.x) * 7.));
++      fo = max(fo, max(circ(p, vec2(.33, .5), .12), circ(p, vec2(.66, .55), .11))); cn = vec2(.5, .66); }
++    else if (sp < 8.5) { tr = step(abs(p.x - .5), .085 + .05 * step(p.y, .08)) * step(p.y, .45); // oak: thick trunk, broad lumpy crown
++      fo = max(max(circ(p, vec2(.5, .64), .26), max(circ(p, vec2(.26, .56), .19), circ(p, vec2(.74, .56), .19))), max(circ(p, vec2(.37, .8), .16), circ(p, vec2(.63, .8), .16)));
++      fo = max(fo, max(circ(p, vec2(.13, .5), .1), circ(p, vec2(.87, .5), .1))); cn = vec2(.5, .62); rr = .45; }
++    else if (sp < 9.5) { tr = step(abs(p.x - .5), .04) * step(p.y, .18); // poplar: tall column
++      vec2 q = (p - vec2(.5, .57)) / vec2(.36, .43); fo = step(dot(q, q), 1. - .1 * sin(q.y * 14.)); cn = vec2(.5, .57); }
++    else if (sp < 10.5) { // bush cluster: three overlapping blobs
++      fo = max(max(circ(p * vec2(1., .5), vec2(.27, .15), .2), circ(p * vec2(1., .5), vec2(.7, .16), .24)), circ(p * vec2(1., .5), vec2(.48, .28), .21)); cn = vec2(.5, .4); }
++    else { tr = step(abs(p.x - .5), .055 * (1. - p.y * .6)) * step(p.y, .9); // bare tree: forked branches
++      tr = max(tr, max(max(seg(p, vec2(.5, .42), vec2(.2, .78), .022), seg(p, vec2(.5, .55), vec2(.8, .88), .022)), max(seg(p, vec2(.5, .32), vec2(.82, .56), .02), seg(p, vec2(.35, .6), vec2(.3, .95), .016))));
++      tr = max(tr, max(seg(p, vec2(.68, .73), vec2(.92, .76), .014), seg(p, vec2(.28, .68), vec2(.1, .74), .014))); }
+     if (fo + tr < 0.5) discard;
      float isF = step(0.5, fo);
      vec2 d = (p - cn) / rr; vec3 N = normalize(vR * d.x * 0.8 + vec3(0., 1., 0.) * (0.35 + d.y * 0.5) + normalize(cameraPosition - vW) * 0.6);
      vec3 al = isF > 0.5 ? vC : vec3(.42,.3,.2);
+-    if (sp > 4.5) al = vec3(.11,.09,.08);
++    if (sp > 6.5 && sp < 7.5 && isF < 0.5) al = mix(vec3(.9,.88,.82), vec3(.08,.07,.06), step(.78, fract(p.y * 21. + .3 * sin(p.x * 50.)))); // birch bark
++    if (sp > 10.5) al = vec3(.36,.29,.23);
 +    float dm = 1. - vHP; // damage: ink cracks + pale splinters on the trunk (same look as the old near mesh)
 +    if (dm > 0.01 && isF < 0.5) { float zz = abs(fract(p.y * 14. + 3. * p.x) - 0.5); float cr = abs(sin(p.x * 60. + p.y * 9. + 4. * zz));
 +      float on = step(p.y, 0.12 + 0.45 * dm); al = mix(al, vec3(.86,.72,.48), step(cr, 0.3 + 0.15 * dm) * on * 0.8); al = mix(al, vec3(.04,.03,.03), step(cr, 0.12 + 0.1 * dm) * on); }
-     if (sp > 4.5) al = vec3(.11,.09,.08);
++    if (sp > 4.5 && sp < 5.5) al = vec3(.11,.09,.08);
      al = mix(al, al * vec3(1.25, 1.0, 0.45), (1. - vHP) * 0.7 * isF);
      al = mix(al, vec3(.09,.07,.06), smoothstep(0.05, 0.9, vBurn));
-@@ -204,7 +207,7 @@
+     vec3 col = comic(al, N, vW, 0.0);
+@@ -118,19 +148,20 @@
+     gl_FragColor = vec4(col, ncode(N) * 0.9 + 0.05);
+   }`;
+ const IMP_VS = /* glsl */`
+-  attribute vec4 iPos, iPar; attribute vec3 iCol; attribute float iSp; uniform vec3 uWH[6]; uniform vec3 uFC[6];
++  attribute vec4 iPos, iPar; attribute vec3 iCol; attribute float iSp; uniform vec3 uWH[12]; uniform vec3 uFC[12];
+   varying vec2 vUv; varying vec3 vW, vC, vR; varying float vSp, vHP, vBurn;
+   uniform vec3 uWind; uniform float uTime;
+   void main(){
+-    int k = int(iSp + 0.5); vec3 wh = uWH[0], fc = uFC[0];
+-    for (int i = 1; i < 6; i++) if (i == k) { wh = uWH[i]; fc = uFC[i]; }
++    float shp = floor(iSp + 0.001), au = iSp - shp; int k = int(shp + 0.5); vec3 wh = uWH[0], fc = uFC[0]; // iSp = shape + autumn (fraction)
++    for (int i = 1; i < 12; i++) if (i == k) { wh = uWH[i]; fc = uFC[i]; }
+     vec3 toC = cameraPosition - iPos.xyz; vec3 R = normalize(vec3(toC.z, 0., -toC.x));
+-    float sc = iPar.x, lean = (1. - iPar.y) * 0.5; vec2 ld = vec2(cos(iPar.w), sin(iPar.w));
++    // damage lean + natural per-instance lean (iPos.w on cards)
++    float sc = iPar.x, lean = (1. - iPar.y) * 0.5 + iPos.w; vec2 ld = vec2(cos(iPar.w), sin(iPar.w));
+     vec3 w = iPos.xyz + R * position.x * wh.x * sc + vec3(0., position.y * wh.y * sc * cos(lean), 0.);
+     w.xz += ld * position.y * wh.y * sc * sin(lean);
+     float sw = (sin(uTime + iPos.x * 0.13 + iPos.z * 0.11) * 0.55 + 0.5) * (0.25 + 0.075 * uWind.z) * wh.z;
+     w.xz += uWind.xy * sw * position.y * position.y * sc;
+-    vUv = vec2(position.x + 0.5, position.y); vW = w; vC = iCol * fc; vR = R; vSp = iSp; vHP = iPar.y; vBurn = iPar.z;
++    vUv = vec2(position.x + 0.5, position.y); vW = w; vC = mix(iCol * fc, iCol * mix(vec3(.95,.5,.06), vec3(.78,.16,.04), fract(iPos.x * .37 + iPos.z * .21)), au); vR = R; vSp = shp; vHP = iPar.y; vBurn = iPar.z;
+     gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.);
+   }`;
+ 
+@@ -157,14 +188,33 @@
+         const s = sp === SP.SCRUB ? 0.8 + 0.7 * hash2(ci, cj, 55) : sp === SP.ACACIA ? 0.85 + 0.45 * hash2(ci, cj, 55) : 0.75 + 0.6 * hash2(ci, cj, 55);
+         const v = 0.85 + 0.3 * hash2(ci, cj, 56), dry = sp === SP.SCRUB || sp === SP.ACACIA ? 1 : 0;
+         t = { id, x, z, y: o.h - 0.15, sp, s, rot: hash2(ci, cj, 57) * 6.283, tint: [v * (1 + 0.15 * dry * (hash2(ci, cj, 58) - 0.3)), v, v * (0.9 + 0.2 * hash2(ci, cj, 59))], lean: hash2(ci, cj, 60) * 6.283 };
++        variant(t, ci, cj, o);
+       }
+     }
+     cells.set(id, t); return t;
+   }
++  // visual variant by biome: altitude (vs the snow line) and moisture (forest vs scrub/savanna weight, rivers); hue/lean/scale per instance
++  function variant(t, ci, cj, o) {
++    const r = hash2(ci, cj, 62), alt = Math.max(0, Math.min(1, (o.h - 25) / (snowLine(t.x, t.z) - 25))), moist = Math.max(0, Math.min(1, BWl[2] * 1.2 + (o.riv < 40 ? 0.4 : 0) - BWl[1] * 0.8));
++    let vs = t.sp, au = 0;
++    if (t.sp === SP.CONIFER) { if (r < 0.2 + 0.6 * alt) vs = 6; }
++    else if (t.sp === SP.BROAD) {
++      const pBare = 0.03 + 0.1 * (1 - moist) * alt, pBirch = 0.12 + 0.35 * alt * moist, pPop = o.riv < 60 ? 0.35 : 0.06 * moist, pOak = 0.3 * (1 - alt) * (0.5 + 0.5 * (1 - moist));
++      let q = r; if ((q -= pBare) < 0) vs = 11; else if ((q -= pBirch) < 0) vs = 7; else if ((q -= pPop) < 0) vs = 9; else if ((q -= pOak) < 0) vs = 8;
++      const fall = Math.sin(t.x * 0.0021 + 1.3 * Math.cos(t.z * 0.0017)) * Math.cos(t.z * 0.0013 - 0.7); // regional autumn patches
++      if (vs !== 11 && fall > 0.25) { const a = hash2(ci, cj, 63); if (a < (fall - 0.25) * 2.2) au = 0.35 + 0.6 * hash2(ci, cj, 64); }
++    } else if (t.sp === SP.SCRUB) { if (r < 0.45) vs = 10; }
++    t.vs = vs; t.au = Math.min(0.95, au);
++    t.nl = (hash2(ci, cj, 65) - 0.5) * (vs === 11 || t.sp === SP.ACACIA ? 0.22 : vs === 6 || vs === 9 ? 0.06 : 0.12); // natural lean (rad)
++    t.s *= vs === 8 ? 1.1 : vs === 10 ? 0.9 : 1;
++    if (vs === 6) { t.tint[0] *= 0.85; t.tint[2] *= 1.08; } // bluish spruce
++    t.tint[1] *= 0.92 + 0.16 * hash2(ci, cj, 66); // extra hue spread
++  }
++  const shH = t => SHH[t.vs] || SPH[t.sp]; // visual height (m at scale 1)
+   function live(t) { return t && !removed.has(t.id); }
+   function view(t) {
+     const b = burn.get(t.id) || 0, charred = b >= 1;
+-    return { id: t.id, pos: { x: t.x, y: t.y, z: t.z }, radius: RADIUS[charred ? SP.DEAD : t.sp] * t.s, height: SPH[t.sp] * t.s * (charred ? 0.75 : 1), hp: hp.get(t.id) ?? 3, maxHp: 3,
++    return { id: t.id, pos: { x: t.x, y: t.y, z: t.z }, radius: RADIUS[charred ? SP.DEAD : t.sp] * t.s, height: shH(t) * t.s * (charred ? 0.75 : 1), hp: hp.get(t.id) ?? 3, maxHp: 3,
+       species: SPECIES[t.sp], burning: burning.has(t.id), charred, burn: b };
+   }
+   // queryTrees({x,z,r}) | ({minX,minZ,maxX,maxZ}) | (x,z,r)
+@@ -204,7 +254,7 @@
    }
    // ---------- rendering ----------
    let near = [], imp = null, lastBuild = { x: 1e9, z: 1e9, dx: 0, dz: 0, t: -1 }, nearCount = 0, impCount = 0, pending = false, time = 0;
@@ -153,9 +263,39 @@ diff -ruN a/js/terrain/trees.js b/js/terrain/trees.js
    function attrs(g, max, withSp) {
      const a = { iPos: new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4), iPar: new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4), iCol: new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3) };
      if (withSp) a.iSp = new THREE.InstancedBufferAttribute(new Float32Array(max), 1);
+@@ -219,10 +269,9 @@
+       const mat = new THREE.ShaderMaterial({ uniforms: { ...U, uH: { value: SPH[k] }, uSway: { value: k === 0 ? 0.6 : k === 4 || k === 5 ? 0.12 : k === 3 ? 0.5 : 1 } }, vertexShader: NEAR_VS, fragmentShader: NEAR_FS, side: THREE.DoubleSide });
+       const mesh = new THREE.Mesh(g, mat); mesh.frustumCulled = false; scene.add(mesh); near.push({ mesh, g, a, n: 0 });
+     });
+-    const W = [5.4, 6.6, 9.2, 3.2, 3.2, 2.4];
+     const ig = new THREE.InstancedBufferGeometry(); ig.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0], 3)); ig.setIndex([0, 1, 2, 0, 2, 3]);
+     const ia = attrs(ig, IMAX, true);
+-    const im = new THREE.ShaderMaterial({ uniforms: { ...U, uWH: { value: SPH.map((h, k) => new THREE.Vector3(W[k], h * 1.04, k === 0 ? 0.6 : k >= 4 ? 0.1 : 1)) }, uFC: { value: [0x377a40, 0x558f37, 0x7b8a35, 0x8f9440, 0x3f8a48, 0x1c1714].map(h => new THREE.Color().setHex(h, THREE.LinearSRGBColorSpace)) } }, vertexShader: IMP_VS, fragmentShader: IMP_FS, side: THREE.DoubleSide });
++    const im = new THREE.ShaderMaterial({ uniforms: { ...U, uWH: { value: SHW.map((w, k) => new THREE.Vector3(w, (SHH[k] || SPH[SHAPE_SP[k]]) * 1.04, SHSW[k])) }, uFC: { value: SHC.map(h => new THREE.Color().setHex(h, THREE.LinearSRGBColorSpace)) } }, vertexShader: IMP_VS, fragmentShader: IMP_FS, side: THREE.DoubleSide });
+     const imesh = new THREE.Mesh(ig, im); imesh.frustumCulled = false; scene.add(imesh); imp = { mesh: imesh, g: ig, a: ia };
+     return [...near.map(n => n.mesh), imesh];
+   }
+@@ -244,7 +293,7 @@
+       const d = Math.sqrt(d2); if (d > 25 && (wx * dx + wz * dz) < -0.42 * d) continue; // behind camera
+       const b = burn.get(t.id) || 0, sp = b >= 1 ? SP.DEAD : t.sp;
+       if (d2 < N2 * (0.9 + 0.2 * hash2(i, j, 61))) { const L = near[sp]; if (L.n < NMAX[sp]) put(L.a, L.n++, t, sp, b); }
+-      else if (ni < IMAX) { put(imp.a, ni, t, sp, b); imp.a.iSp.array[ni] = sp; ni++; }
++      else if (ni < IMAX) { put(imp.a, ni, t, sp, b); const ch = b >= 1; imp.a.iSp.array[ni] = ch ? SP.DEAD : t.vs + t.au; imp.a.iPos.array[ni * 4 + 3] = ch ? 0 : t.nl; ni++; }
+     }
+     nearCount = 0;
+     for (const L of near) { L.g.instanceCount = L.n; nearCount += L.n; for (const k in L.a) { L.a[k].needsUpdate = true; L.a[k].clearUpdateRanges(); L.a[k].addUpdateRange(0, Math.max(1, L.n * L.a[k].itemSize)); } }
+@@ -259,7 +308,7 @@
+       rebuild(camPos.x, camPos.z, dx, dz, lb.t < 0 ? 400 : 5); Object.assign(lb, { x: camPos.x, z: camPos.z, dx, dz, t: time }); dirty = false;
+     }
+   }
+-  function burningList() { const out = []; for (const id of burning) { const t = find(id); if (t) out.push({ id, x: t.x, y: t.y, z: t.z, h: SPH[t.sp] * t.s, b: burn.get(id) || 0, sp: t.sp }); } return out; }
++  function burningList() { const out = []; for (const id of burning) { const t = find(id); if (t) out.push({ id, x: t.x, y: t.y, z: t.z, h: shH(t) * t.s, b: burn.get(id) || 0, sp: t.sp }); } return out; }
+   return {
+     queryTrees, damageTree, removeTree, setTreeHP, getTree, igniteTree, burningList, setup, update,
+     stats: () => ({ near: nearCount, impostors: impCount, cached: cells.size, removed: removed.size, burning: burning.size, damaged: hp.size }),
 diff -ruN a/js/terrain/weather.js b/js/terrain/weather.js
 --- a/js/terrain/weather.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/weather.js	2026-11-01 19:31:47.653655782 +0100
++++ b/js/terrain/weather.js	2026-11-01 19:43:40.080201605 +0100
 @@ -11,7 +11,7 @@
  const CN = 64, CSZ = 4096, WN = 48, WS = 40, LAT = 100, CR = 1450;
  const C_DAY_H = new THREE.Color(0xd9f1ff), C_DAY_Z = new THREE.Color(0x1f74e0), C_DUSK_H = new THREE.Color(0xffad6e), C_DUSK_Z = new THREE.Color(0x4f4aa8),
@@ -203,7 +343,7 @@ diff -ruN a/js/terrain/weather.js b/js/terrain/weather.js
      const R = st.localRain, Cv = st.localCov; tmpC.copy(C_RAIN).multiply(L);
 diff -ruN a/js/terrain/world.js b/js/terrain/world.js
 --- a/js/terrain/world.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/world.js	2026-11-01 19:31:47.653655782 +0100
++++ b/js/terrain/world.js	2026-11-01 19:43:40.080201605 +0100
 @@ -136,7 +136,10 @@
    if (!n) {
      const x = (i + 0.5 + 0.55 * (hash(i, j, 11) - 0.5)) * RG, z = (j + 0.5 + 0.55 * (hash(i, j, 12) - 0.5)) * RG;
