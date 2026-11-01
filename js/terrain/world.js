@@ -136,7 +136,10 @@ function nodeAt(i, j) {
   if (!n) {
     const x = (i + 0.5 + 0.55 * (hash(i, j, 11) - 0.5)) * RG, z = (j + 0.5 + 0.55 * (hash(i, j, 12) - 0.5)) * RG;
     let h = 0; for (const [ox, oz] of [[0, 0], [40, 0], [-40, 0], [0, 40], [0, -40]]) h += natural(x + ox, z + oz) / 5;
-    n = { i, j, x, z, h: mx(h, WATER + 2.5) }; nodes.set(key, n);
+    h = mx(h, WATER + 2.5);
+    // ROADS OVER TERRAIN (local): a junction sitting on a race loop takes the loop's bed height, so the roads meeting there do not dam/bury it
+    const lp = nearTrack(x, z).path; if (pathDist(lp, x, z) && PD.d < lp.hw + 140) { baseProfile(lp); const y = profY(lp, PD.t); h = PD.d < lp.hw + 70 ? y : h + (y - h) * sst(lp.hw + 140, lp.hw + 70, PD.d); }
+    n = { i, j, x, z, h }; nodes.set(key, n);
   }
   return n;
 }
@@ -154,13 +157,14 @@ function edgeAt(i, j, dir) {
     const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz), k = 1 + fl(hash(i, j, 23 + dir) * (type === HWY ? 2 : 3));
     const amp = (hash(i, j, 25 + dir) - 0.5) * 2 * (type === HWY ? 0.18 : 0.26) * L / (Math.PI * k);
     e = { id: key, type, a, b, ax: a.x, az: a.z, L, dx: dx / L, dz: dz / L, nx: -dz / L, nz: dx / L, amp, k, hw: type === HWY ? ROAD_HW.hwy : ROAD_HW.trail, loop: false };
-    buildProfile(e);
+    e.len = L; // profile is built lazily on first height query (crossing pins need the other roads' profiles)
   }
   edges.set(key, e); return e;
 }
 // path point: t in [0,1]; fills PP {x,z,tx,tz,y,curv,bridge}
 const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0 };
 function pathPoint(e, t, wantY = true) {
+  if (wantY && !e.pinned) buildProfile(e); // lazy build first: it reuses PP
   if (e.loop) {
     const th = t * 6.283185307, r = trackR(e.trk, th), dr = trackDR(e.trk, th);
     PP.x = e.trk.cx + r * C(th); PP.z = e.trk.cz + r * S(th);
@@ -170,10 +174,14 @@ function pathPoint(e, t, wantY = true) {
     PP.x = e.ax + e.dx * t * e.L + e.nx * o; PP.z = e.az + e.dz * t * e.L + e.nz * o;
     const l = Math.sqrt(1 + o1 * o1); PP.tx = (e.dx + e.nx * o1) / l; PP.tz = (e.dz + e.nz * o1) / l; PP.curv = o2 / (l * l * l);
   }
-  if (wantY) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.y = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; PP.bridge = e.br[u < 0.5 ? i : i + 1]; }
+  if (wantY) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.y = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; PP.bridge = e.br[u < 0.5 ? i : i + 1];
+    if (e.pins) PP.y += pinAt(e, t); }
   return PP;
 }
-function buildProfile(e) {
+function profY(e, t) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; return e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; }
+function buildProfile(e) { baseProfile(e); if (!e.pinned) { e.pinned = true; e.pins = crossPins(e); } }
+function baseProfile(e) {
+  if (e.prof) return;
   const len = e.loop ? 6.283 * e.trk.R * 1.1 : e.L, M = e.M = mx(8, Math.ceil(len / 30)), ds = len / M;
   const p = new Float32Array(M + 1), wet = new Uint8Array(M + 1);
   for (let i = 0; i <= M; i++) { pathPoint(e, i / M, false); p[i] = natural(PP.x, PP.z); wet[i] = p[i] < WATER + 0.6 ? 1 : 0; }
@@ -195,6 +203,10 @@ function buildProfile(e) {
   const g = (e.type === HWY ? 0.09 : 0.15) * ds;
   for (let i = 1; i <= M; i++) p[i] = clamp(p[i], p[i - 1] - g, p[i - 1] + g);
   for (let i = M - 1; i >= 0; i--) p[i] = clamp(p[i], p[i + 1] - g, p[i + 1] + g);
+  // ROADS OVER TERRAIN (local): the grade clamp could drag an edge's ends off its junction nodes (up to ~70 m steps where a steep edge
+  // could not reach the node within the grade limit) -> spread the residual linearly so every edge meets its nodes exactly
+  if (e.loop) { const err = p[M] - p[0]; for (let i = 0; i <= M; i++) p[i] -= err * i / M; } // closed seam (the grade passes could leave a step at t=0/1)
+  if (!e.loop) { const e0 = p[0] - e.a.h, e1 = p[M] - e.b.h; for (let i = 0; i <= M; i++) p[i] -= e0 * (1 - i / M) + e1 * (i / M); }
   // bridges over short wet runs (rivers); long wet runs become causeways
   const br = new Uint8Array(M + 1);
   if (!e.loop) for (let i = 0; i <= M;) {
@@ -203,6 +215,57 @@ function buildProfile(e) {
     i = j;
   }
   e.prof = p; e.br = br; e.ds = ds; e.len = len;
+}
+// ROADS OVER TERRAIN (local): level crossings. Where two roads overlap, the lower-priority one (trail < loop < highway, then id) gets a smooth
+// additive bump (plateau over the overlap, ramps at <= ~7% extra grade) so its centre-line meets the other road's surface: no road is buried
+// in the other's embankment or left floating over its cutting. Priority is a strict order, so lazy profile builds never recurse in a cycle.
+const RANK = { [HWY]: 3, [LOOP]: 2, [TRAIL]: 1 };
+const junc = (o, e) => !o.loop && !e.loop && (o.a === e.a || o.a === e.b || o.b === e.a || o.b === e.b); // junction neighbours already share the node height
+const above = (o, e) => junc(o, e) ? false : RANK[o.type] !== RANK[e.type] ? RANK[o.type] > RANK[e.type] : String(o.id) > String(e.id);
+function pinAt(e, t) { // piecewise: plateau at each crossing, smooth blend between neighbouring crossings, smooth decay elsewhere
+  const P = e.pins, s = t * e.len; let L = null, R = null;
+  for (const q of P) { if (q.s <= s) L = q; else { R = q; break; } }
+  let v;
+  if (L && s - L.s <= L.P) v = L.d; else if (R && R.s - s <= R.P) v = R.d;
+  else { const a = L ? L.s + L.P : 0, b = R ? R.s - R.P : 0;
+    if (L && R && b - a < L.R + R.R) v = L.d + (R.d - L.d) * sst(a, b, s);
+    else v = (L ? L.d * sst(a + L.R, a, s) : 0) + (R ? R.d * sst(b - R.R, b, s) : 0); }
+  if (!e.loop) v *= sst(0, 15, mn(t, 1 - t) * e.len); // junction nodes keep their shared height (nodes near a loop already snap to it)
+  return v;
+}
+function crossPins(e) {
+  const len = e.len, n = Math.ceil(len / 5), pins = [];
+  pathPoint(e, 0.5, false); const cx = PP.x, cz = PP.z;
+  const rad = e.loop ? e.trk.R * 1.4 + 60 : len / 2 + A(e.amp) + 60;
+  for (const o of pathsNear(cx, cz, rad)) {
+    if (o === e || !above(o, e)) continue;
+    const lim = o.hw + e.hw + 2; let best = null;
+    const flush = () => { if (best) { pins.push(best); best = null; } };
+    for (let i = 0; i <= n; i++) {
+      const t = i / n; pathPoint(e, t, false); const x = PP.x, z = PP.z, tx = PP.tx, tz = PP.tz;
+      if (!pathDist(o, x, z) || PD.d > lim) { flush(); continue; }
+      if (!best || PD.d < best.dd) best = { t, dd: PD.d, ot: PD.t, os: PD.s, x, z, tx, tz };
+    }
+    flush();
+  }
+  const out = [];
+  for (const b of pins) {
+    // re-find the road this pin belongs to (closest above-priority road at the point)
+    let tgt = null, bd = 1e9;
+    for (const r of pathsNear(b.x, b.z, 60)) { if (r === e || !above(r, e) || !pathDist(r, b.x, b.z)) continue; if (PD.d < bd) { bd = PD.d; tgt = { r, t: PD.t, s: PD.s }; } }
+    if (!tgt) continue;
+    pathPoint(tgt.r, tgt.t); if (PP.bridge) continue;
+    const bank = tgt.r.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07), ho = PP.y + clamp(tgt.s, -tgt.r.hw, tgt.r.hw) * bank;
+    const sn = A(b.tx * PP.tz - b.tz * PP.tx), cs = A(b.tx * PP.tx + b.tz * PP.tz);
+    const f = b.t * e.M, i = mn(e.M - 1, fl(f)), u = f - i, he = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u;
+    if (e.br[u < 0.5 ? i : i + 1]) continue;
+    const d = ho - he; if (A(d) < 0.03) continue;
+    out.push({ t: b.t, d, P: mn(45, (tgt.r.hw + e.hw * cs + 2) / mx(0.3, sn)), R: mx(30, 1.5 * A(d) / 0.08) });
+  }
+  if (!out.length) return null;
+  for (const q of out) q.s = q.t * len;
+  if (e.loop) for (const q of out.slice()) out.push({ ...q, s: q.s - len }, { ...q, s: q.s + len }); // circular neighbours
+  out.sort((p, q) => p.s - q.s); return out;
 }
 // ---------------- race loops: one closed polar sine curve per 3 km lattice cell (kept from v1) ----------------
 const CELL = 3000;
@@ -217,7 +280,7 @@ const tcache = new Map();
 export function nearTrack(x, z) {
   const ci = fl(x / CELL), cj = fl(z / CELL), key = ci * 100000 + cj;
   let t = tcache.get(key);
-  if (!t) { t = trackOf(ci, cj); t.path = { id: 'L' + t.id, loop: true, trk: t, type: LOOP, hw: ROAD_HW.loop, k: 0, amp: 0 }; buildProfile(t.path); tcache.set(key, t); }
+  if (!t) { t = trackOf(ci, cj); t.path = { id: 'L' + t.id, loop: true, trk: t, type: LOOP, hw: ROAD_HW.loop, k: 0, amp: 0, len: 6.283 * t.R * 1.1 }; tcache.set(key, t); }
   return t;
 }
 // candidate edges per road cell (cached)
@@ -238,7 +301,8 @@ const PD = { d: 1e9, s: 0, t: 0 };
 function pathDist(e, x, z) { // loops: radial offset scaled to the perpendicular distance, so the drivable width matches the mesh ribbon
   if (e.loop) {
     const T = e.trk, dx = x - T.cx, dz = z - T.cz, th = Math.atan2(dz, dx), r = trackR(T, th), rr = Math.hypot(dx, dz);
-    PD.s = (rr - r) * r / Math.hypot(r, trackDR(T, th)); PD.d = A(PD.s); PD.t = (th < 0 ? th + 6.283185307 : th) / 6.283185307; return true;
+    PD.s = (rr - r) * r / Math.hypot(r, trackDR(T, th)); PD.d = A(PD.s); PD.t = (th < 0 ? th + 6.283185307 : th) / 6.283185307;
+    if (PD.d < e.hw + CORE + 62) footRefine(e, x, z); return true;
   }
   const rx = x - e.ax, rz = z - e.az, proj = rx * e.dx + rz * e.dz, perp = rx * e.nx + rz * e.nz;
   if (proj < -REACH || proj > e.L + REACH || A(perp) > A(e.amp) + REACH) return false;
@@ -246,10 +310,26 @@ function pathDist(e, x, z) { // loops: radial offset scaled to the perpendicular
   let o = e.amp * S(w * t); const o1 = e.amp * w * C(w * t) / e.L;
   t = clamp(t + (perp - o) * o1 / (1 + o1 * o1) / e.L, 0, 1); // one Newton step along the tangent
   o = e.amp * S(w * t); const ax = proj - t * e.L, ap = perp - o;
-  PD.d = Math.hypot(ax, ap); PD.s = ap; PD.t = t; return true;
+  PD.d = Math.hypot(ax, ap); PD.s = ap; PD.t = t;
+  if (PD.d < e.hw + CORE + 62) footRefine(e, x, z); return true;
+}
+// ROADS OVER TERRAIN (local): exact foot of the perpendicular onto the centre-line, so the terrain bed under every point of the road ribbon
+// uses the same profile station + lateral offset the ribbon (roads.js) uses -> the ground can neither poke through nor drop under the road edges.
+// (polar angle on loops / one Newton step on sine edges left the bed up to ~1 m off the ribbon on graded curves)
+function footRefine(e, x, z) {
+  let t = PD.t;
+  for (let k = 0; k < 4; k++) {
+    pathPoint(e, t, false); const px = PP.x, pz = PP.z, tx = PP.tx, tz = PP.tz;
+    pathPoint(e, t + 1e-5, false); const sp = Math.hypot(PP.x - px, PP.z - pz) / 1e-5;
+    const dt = ((x - px) * tx + (z - pz) * tz) / sp;
+    t += dt; if (e.loop) t -= Math.floor(t); else t = clamp(t, 0, 1);
+    if (A(dt * sp) < 0.005) break;
+  }
+  pathPoint(e, t, false);
+  const rx = x - PP.x, rz = z - PP.z; PD.t = t; PD.s = -rx * PP.tz + rz * PP.tx; PD.d = Math.hypot(rx, rz);
 }
 // ---------------- full sample: natural terrain + road beds/banking + bridge decks ----------------
-export const OUT = { h: 0, hn: 0, deck: -1e9, road: 0, rtype: 0, dom: 0, riv: 1e9, rd: 1e9, bg: 0, bs: 0, bf: 0 };
+export const OUT = { h: 0, hn: 0, deck: -1e9, road: 0, rtype: 0, dom: 0, riv: 1e9, rd: 1e9, bg: 0, bs: 0, bf: 0, rb: 0, rdd: 1e9 };
 // ---- biome layer (terrain module): pure sine fields over the region selector -> dry grassland / savanna / forest weights ----
 export const BIOME = { GRASSLAND: 0, SAVANNA: 1, FOREST: 2, DESERT: 3, CANYON: 4, ALPINE: 5 };
 export const BIOME_NAMES = ['grassland', 'savanna', 'forest', 'desert', 'canyon', 'alpine'];
@@ -271,7 +351,7 @@ export function biomeOf(o) { // dominant biome of a sample
 }
 const CORE = 1.5;
 export function sample(x, z, o = OUT) {
-  const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn;
+  const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn, rdd = 1e9, rb = 0;
   const list = cellEdges(fl(x / RG), fl(z / RG));
   const tk = nearTrack(x, z);
   for (let n = -1; n < list.length; n++) {
@@ -281,18 +361,20 @@ export function sample(x, z, o = OUT) {
     pathPoint(e, PD.t);
     const bank = e.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07);
     const hb = PP.y + clamp(PD.s, -e.hw, e.hw) * bank;
+    const span = PP.bridge && hn < hb; // ROADS OVER TERRAIN (local): a bridge station only floats over ground that is lower than its deck; at abutments/banks the bed is carved like any road
+    if (!span && d - e.hw < rdd) { rdd = d - e.hw; rb = PP.y - A(e.hw * bank); } // lowest edge of the nearest bed (render grids keep under it)
     const core = e.hw + CORE, blend = mn(60, 8 + 1.3 * A(hn - hb));
     if (d > core + blend) continue;
     let w = d < core ? 1 : sst(core + blend, core, d);
     if (d < e.hw + 0.8 && d - e.hw < rdmin) { rdmin = d - e.hw; rtype = e.type; }
     if (d < e.hw + 0.5) rw = 1; else rw = mx(rw, sst(e.hw + 2.5, e.hw + 0.5, d));
-    if (PP.bridge) { if (d < e.hw + 1.2) deck = mx(deck, hb); w = 0; }
-    if (w > bestW) { bestW = w; bestH = hb; }
+    if (PP.bridge) { if (d < e.hw + 1.2) deck = mx(deck, hb); if (span) w = 0; }
+    if (w > bestW || (w === 1 && bestW === 1 && d < e.hw + 0.5 && hb > bestH)) { bestW = w; bestH = hb; }
   }
   if (bestW > 0) h = hn + (bestH - hn) * bestW;
   if (AF.length) { AO.h = h; AO.road = rw; AO.rtype = rtype; AO.rd = rdmin; if (airMod(x, z, hn)) { h = AO.h; rw = AO.road; rtype = AO.rtype; rdmin = AO.rd; } }
   const edge = mx(A(x), A(z)) - WORLD; if (edge > 0) h += edge * 0.6; // world rim
-  o.h = h; o.hn = hn; o.deck = deck; o.road = rw; o.rtype = rtype; o.dom = NAT.dom; o.riv = NAT.riv; o.rd = rdmin;
+  o.h = h; o.hn = hn; o.deck = deck; o.road = rw; o.rtype = rtype; o.dom = NAT.dom; o.riv = NAT.riv; o.rd = rdmin; o.rb = rb; o.rdd = rdd;
   return o;
 }
 export function height(x, z) { return sample(x, z).h; }

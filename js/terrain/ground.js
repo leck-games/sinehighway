@@ -28,7 +28,10 @@ class Grid {
     const s = this.step, x = gi * s, z = gj * s, k = this.ri(gj) * this.n + this.ri(gi);
     sample(x, z, SO); normal(x, z, nv); const surf = surfaceOf(x, z, SO, nv[1]); colourOf(x, z, SO, nv[1], surf, cv);
     const j = 0.94 + 0.12 * hash2(gi, gj, 3);
-    this.H[k] = SO.h; this.NRM.set(nv, k * 3); this.COL[k * 3] = cv[0] * j; this.COL[k * 3 + 1] = cv[1] * j; this.COL[k * 3 + 2] = cv[2] * j;
+    // ROADS OVER TERRAIN (local): a grid triangle that overlaps a road ribbon has all its vertices within ~1.5 grid steps of the road edge;
+    // keeping those vertices at or under the road bed means linear interpolation between them can never poke through the ribbon
+    // (mattered most on the 16 m far grid, where cut slopes covered distant roads). Physics still uses the exact world.sample().
+    this.H[k] = SO.rdd < s * 1.5 && SO.rb > 0.6 ? Math.min(SO.h, SO.rb - (s > 8 ? 0.9 : 0.06)) : SO.h; this.NRM.set(nv, k * 3); this.COL[k * 3] = cv[0] * j; this.COL[k * 3 + 1] = cv[1] * j; this.COL[k * 3 + 2] = cv[2] * j;
     this.SW.set(SWT[surf], k * 4);
     // far-forest canopy weight (ground shader paints a cel canopy beyond the tree impostor range)
     this.CW[k] = (SO.h < 0.5 || SO.road > 0.05 || SO.riv < 8 || surf === 4 || surf === 5) ? 0 : Math.min(1, Math.max(0, (SO.bf * (0.42 + 0.5 * clump(x, z)) - 0.3) / 0.4));
