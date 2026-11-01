@@ -7,7 +7,7 @@ const res = {}; const ok = (k, v, info) => { res[k] = { pass: !!v, info }; conso
   const p = await b.newPage(); await p.setViewport({ width: 844, height: 390, hasTouch: false });
   const errs = []; p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); }); p.on('pageerror', e => errs.push('PAGEERR ' + e.message));
   await p.goto('http://127.0.0.1:18931/?q=med&dyn=0', { waitUntil: 'load' });
-  await p.evaluate(() => localStorage.clear()); await p.reload({ waitUntil: 'load' }); await sleep(4000);
+  await p.evaluate(() => { localStorage.clear(); localStorage.setItem('sinerally_treehp', 'on'); }); await p.reload({ waitUntil: 'load' }); await sleep(4000);
   const E = (f, ...a) => p.evaluate(f, ...a);
   await E(() => { window.__ev = []; __st.bus.on('*', (d, t) => __ev.push(t)); });
   // driving

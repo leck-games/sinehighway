@@ -379,8 +379,10 @@ const labelsEl = $('labels'), hpLabs = [], recentHit = new Map(); const MAXLAB =
 for (let i = 0; i < MAXLAB; i++) { const d = document.createElement('div'); d.className = 'hp'; d.innerHTML = '<div class="segs"><div class="seg"><i></i></div><div class="seg"><i></i></div><div class="seg"><i></i></div></div><span></span>'; d.style.display = 'none'; labelsEl.appendChild(d); hpLabs.push(d); }
 const pv = new THREE.Vector3();
 function project(x, y, z) { pv.set(x, y, z).project(camera); if (pv.z > 1 || pv.z < -1) return null; return [(pv.x * 0.5 + 0.5) * innerWidth, (-pv.y * 0.5 + 0.5) * innerHeight]; }
-let labT = 0, labTrees = [];
+let labT = 0, labTrees = []; let treeHpOn = localStorage.getItem('sinerally_treehp') === 'on'; // tree HP hidden by default; toggle in ☰ → CONTROLS
+function setTreeHp(on) { treeHpOn = !!on; localStorage.setItem('sinerally_treehp', on ? 'on' : 'off'); if (!on) for (const d of hpLabs) d.style.display = 'none'; }
 function updateLabels(dt) {
+  if (!treeHpOn) return;
   labT -= dt; const now = performance.now();
   if (labT <= 0) { labT = 0.12; const all = world.queryTrees(veh.p.x, veh.p.z, 32); for (const t of all) { t.d = Math.hypot(t.x - veh.p.x, t.z - veh.p.z); if (hpMap.has(t.id)) t.hp = hpMap.get(t.id); }
     all.sort((a, b) => ((b.hp < 3 || recentHit.has(b.id)) - (a.hp < 3 || recentHit.has(a.id))) || a.d - b.d); let full = 0; labTrees = all.filter(t => t.hp < 3 || recentHit.has(t.id) || (t.d < 14 && full++ < 3)).slice(0, MAXLAB); } // damaged/hit trees + the 3 nearest intact ones
@@ -403,7 +405,7 @@ bus.on('engine:hot', d => { const p = d.position; T.engineHot({ position: { x: p
 bus.on('engine:overheat', d => { const p = d.position; T.engineOverheat({ position: { x: p[0], z: p[2] }, temp: d.temp }); msg('OVERHEAT!'); for (let k = 0; k < 10; k++) puff(p[0], p[1] + 0.5, p[2], (Math.random() - .5) * 2, 2 + Math.random() * 2, (Math.random() - .5) * 2, 1.4, 1.2, [0.35, 0.33, 0.32]); });
 bus.on('engine:cooled', () => msg('ENGINE COOLED'));
 bus.on('tree:damage', d => { recentHit.set(d.id, performance.now() + 1600); labT = 0; const y = T.heightAt(d.x, d.z);
-  if (d.cause !== 'harvest') { popText('-' + d.hp.toFixed(1) + ' HP', d.x, y + 4, d.z); burst(d.x, y, d.z, 6, [0.35, 0.62, 0.25]); shake = Math.max(shake, 0.15); } });
+  if (d.cause !== 'harvest') { if (treeHpOn) popText('-' + d.hp.toFixed(1) + ' HP', d.x, y + 4, d.z); burst(d.x, y, d.z, 6, [0.35, 0.62, 0.25]); shake = Math.max(shake, 0.15); } });
 bus.on('tree:destroyed', d => { if (d.cause === 'harvest') return; const y = T.heightAt(d.x, d.z); popText('SMASH!', d.x, y + 5, d.z, '#ffd23c'); burst(d.x, y, d.z, 14, [0.35, 0.62, 0.25], 5); shake = Math.max(shake, 0.25); });
 bus.on('harvester:log', d => popText('+' + d.logs + ' LOG', veh.p.x, veh.p.y + 2.5, veh.p.z, '#ffd23c'));
 bus.on('harvester:full', () => msg('LOG RACK FULL'));
@@ -579,7 +581,8 @@ function buildMenu() {
   const hu = $('mHud'); hu.innerHTML = '';
   const e1 = mk('button', 'sb mbig', '✥ EDIT HUD LAYOUT'); e1.id = 'mEditUi'; e1.style.cssText = 'background:var(--o);color:#fff'; e1.onclick = () => { openMenu(false); uied.openEd(); };
   const r0 = mk('div', 'mrow'); r0.appendChild(e1); hu.appendChild(r0); hu.appendChild(mk('div', 'mnote', 'Drag, scale, hide or fade every HUD element; save presets and slots. Keyboard: U.'));
-  segRows(hu, [['COMPASS', ['On', 'Off'], () => compassOn ? 'On' : 'Off', v => setCompass(v === 'On'), 'Heading strip at the top: race starts, airfields, waypoint, vistas and fuel show only while they are in your view. Move/resize it in EDIT HUD LAYOUT.']]);
+  segRows(hu, [['COMPASS', ['On', 'Off'], () => compassOn ? 'On' : 'Off', v => setCompass(v === 'On'), 'Heading strip at the top: race starts, airfields, waypoint, vistas and fuel show only while they are in your view. Move/resize it in EDIT HUD LAYOUT.'],
+    ['TREE HP', ['Off', 'On'], () => treeHpOn ? 'On' : 'Off', v => setTreeHp(v === 'On'), 'HP bars and damage numbers over trees. Off by default.']]);
   segRows(hu, [['HUD MODE', ['Full', 'Minimal', 'None'], () => uiMode[0].toUpperCase() + uiMode.slice(1), v => setUi(v.toLowerCase()), 'NONE keeps only a faint ☰ ⚙ corner (and the touch controls). Keyboard: I.'],
     ['TILT STEERING', ['Off', 'On'], () => tilt ? 'On' : 'Off', v => { if ((v === 'On') !== tilt) $('tTilt').onclick(); }]]);
   hu.appendChild(mk('div', 'msec', 'KEYBOARD'));
