@@ -5,6 +5,17 @@ This is the first numbered release of Sine Rally. It is built on the finished [S
 - Release: git tag `v0.1`, plus a GitHub Release named "Sine Rally V0.1".
 - The version is set in `js/version.js`, which drives the page title and the menu tag. For a new release, bump it, update `index.html`/`manifest.webmanifest`, tag it, and add the build to the versions repo (see its README).
 
+## Power curves + engine-sim fine tuning (V0.2-dev, 2026-11-01)
+- **☰ → VEHICLE → ⚙ ENGINE / POWER** (per build, saved in localStorage `sinerally_power1`): drag 8 rpm nodes to shape the
+  torque curve, PEAK POWER 20–10 000 hp (log slider + number, kW shown), REDLINE, IDLE, presets STOCK · NA · TURBO · DIESEL ·
+  ELECTRIC · ROTARY, 🌀 TURBO LAG (boost spool also drives the engine-sound turbo), RESET TO STOCK, ‹ BACK. Live hp/torque
+  readout, peak marker and the current rpm. Physics uses the curve (`js/power.js`: torque table, shift points, capped top speed,
+  wheel over-rev guard) — 10 000 hp stays finite/stable in ARCADE and NORMAL (`tools/test-power.cjs`).
+- **Sound editor = the Engine Sim demo 1:1**: the bench now runs the demo's own MotorModel — MODE NEUTRAL REV / DRIVE (AUTO)
+  (auto gearbox, CAR MASS / FINAL DRIVE audible), GAS / BRAKE / NITRO pedals, full demo viz (diagram + tach + crank dial +
+  NOS gauge), tach line, demo keys (W/↑ S/↓ Shift/Space, N neutral, C hide controls), numeric entry on every slider, slider
+  ranges identical to the demo (`tools/test-soundparity.cjs`, `tools/test-powerui.cjs`).
+
 ## Atmosphere: FUEL-style sky (V0.2-dev, 2026-10-31)
 - The sky dome is a smooth procedural gradient from zenith to horizon, with a warm sun disc and halo, a horizon haze band, optional thin cirrus, and dithering against banding. It follows the existing day/night cycle: the sun really sets, and stars and moon come out at night.
 - Fog is view-dependent "haze" that uses the same horizon and sun-glow colour as the sky, so far terrain melts into the sky. The comic post pass skips the sky (no ink, posterize or halftone on it).

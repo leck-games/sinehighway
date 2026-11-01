@@ -17,8 +17,7 @@ export function openPowerPanel({ container, def, getState, onChange = () => {}, 
   const el = document.createElement('div'); el.className = 'pw'; container.innerHTML = ''; container.appendChild(el);
   el.innerHTML = `<div class="pw-h"><button class="sb" data-a="back">‹ BACK</button><b>ENGINE / POWER · ${def.name.toUpperCase()}</b><button class="sb" data-a="reset">RESET TO STOCK</button></div>
 <div class="pw-pre"></div>
-<div class="pw-main"><canvas class="pw-cv" width="760" height="330"></canvas><div class="pw-read"></div></div>
-<div class="pw-sl"></div><div class="mnote pw-note">Drag the dots to shape the torque curve (rpm 0 → redline). The curve is scaled so its peak equals PEAK POWER. Saved per build.</div>`;
+<div class="pw-main"><canvas class="pw-cv" width="760" height="330"></canvas><div class="pw-side"><div class="pw-read"></div><div class="pw-sl"></div></div></div><div class="mnote pw-note">Drag the dots to shape the torque curve (rpm 0 → redline). The curve is scaled so its peak equals PEAK POWER. Saved per build.</div>`;
   const cv = el.querySelector('canvas'), g = cv.getContext('2d'), read = el.querySelector('.pw-read'), pre = el.querySelector('.pw-pre'), sl = el.querySelector('.pw-sl');
   const commit = () => { PW.set(def.id, cfg); onChange(cfg); draw(); readout(); presets(); };
   // presets
