@@ -162,7 +162,15 @@ export function createEngineAudio({ sr, log = console } = {}) {
     t.grounded = s.grounded; t.airborne = s.grounded === 0; t.airTime = s.air; t.surface = s.surface; t.vehicle = s.vehicle; t.paused = paused;
     t.vehiclePreset = s.soundPreset || undefined; // the vehicle's 'default sound preset id' (vehicle module), optional
     const temp = s['engine:temp'] !== undefined ? s['engine:temp'] : s.engineTemp; t.engineTemp = typeof temp === 'number' ? temp : undefined; // °C, optional (physics module)
-    if (test.on) { // sound-editor test bench: synthetic rev / nitro while the editor is open (car input is paused)
+    t.turbo = typeof hostTurbo === 'number' ? hostTurbo : undefined; // game-side boost (power curve TURBO LAG), else the plugin spools its own
+    const motor = test.on && inst && inst.engine && inst.engine.motor && typeof inst.engine.motor.step === 'function' ? inst.engine.motor : null;
+    if (motor) { // sound-editor bench = the demo's own motor model (gas / brake / nitro, NEUTRAL rev or DRIVE auto gearbox, limiter, flywheel, spool)
+      if (test.applied !== test.mode) { motor.setNeutral(test.mode !== 'drive'); if (test.mode === 'drive') { motor.v = 0; motor.gear = 1; } test.applied = test.mode; }
+      const o = motor.step(dt, { gas: test.rev ? 1 : 0, brake: test.brake ? 1 : 0, nitro: !!test.nitro }), c = inst.engine.config; test.tel = o;
+      t.idleRpm = c.idleRpm; t.redlineRpm = c.redline; t.rpm = o.rpm; t.rpmNorm = clamp((o.rpm - c.idleRpm) / Math.max(1, c.redline - c.idleRpm), 0, 1.2);
+      t.throttle = o.throttle; t.brake = test.brake ? 1 : 0; t.load = o.load; t.nitro = !!o.nitro; t.nitroStrength = o.nitro ? 1 : 0; t.nitroTank = o.nitroTank;
+      t.limiter = !!o.limiter; t.ignition = o.spark; t.turbo = o.boost; t.shifting = !!o.shifting; t.gear = o.gear === 'N' ? 0 : o.gear; t.speed = t.fwdSpeed = o.speedKmh / 3.6; t.speedKmh = o.speedKmh;
+    } else if (test.on) { // fallback (plugins without a motor model): synthetic rev / nitro while the editor is open (car input is paused)
       const tgt = test.rev ? t.idleRpm + (t.redlineRpm - t.idleRpm) * 0.93 : t.idleRpm; test.rpm += (tgt - test.rpm) * Math.min(1, dt * (test.rev ? 2.4 : 1.8));
       t.rpm = test.rpm; t.rpmNorm = clamp((t.rpm - t.idleRpm) / Math.max(1, t.redlineRpm - t.idleRpm), 0, 1.2);
       t.throttle = test.rev ? 1 : 0; t.load = test.rev ? 0.5 : -0.2; t.nitro = !!test.nitro; t.nitroStrength = t.nitro ? 1 : 0; t.limiter = false; t.ignition = 1; t.shifting = false;
@@ -174,13 +182,16 @@ export function createEngineAudio({ sr, log = console } = {}) {
       prev.vehicle = t.vehicle;
     }
     prev.upT = Math.max(0, prev.upT - dt); prev.bfT = Math.max(0, prev.bfT - dt);
-    for (const [n, d] of queue.splice(0)) {
+    if (motor) { queue.length = 0; prev.thr = t.throttle; prev.gear = t.gear; prev.nitro = t.nitro; prev.limiter = t.limiter; }
+    else for (const [n, d] of queue.splice(0)) {
       if (n === 'shift') { d.to = t.gear; d.from = t.gear - d.dir; if (d.dir > 0) { prev.upT = 0.2; if (t.rpmNorm > 0.55) backfire(0.5); } }
       event(n, d);
     }
+    if (!motor) {
     if (prev.thr > 0.5 && t.throttle < 0.1 && t.rpmNorm > 0.55) backfire(t.rpmNorm);
     if (t.nitro !== prev.nitro) event('nitro', { on: t.nitro });
     if (t.limiter !== prev.limiter) { event('limiter', { on: t.limiter }); if (t.limiter) backfire(0.8); }
+    }
     prev.thr = t.throttle; prev.gear = t.gear; prev.nitro = t.nitro; prev.limiter = t.limiter;
     if (!inst || paused) return;
     const t0 = performance.now();
@@ -239,7 +250,7 @@ export function createEngineAudio({ sr, log = console } = {}) {
     try { localStorage.setItem(LS_FILE, src); } catch (e) { error = 'Could not store the file: ' + e.message; render(); return false; }
     st.fileName = file.name; save(); return activate('custom-file');
   }
-  const listeners = new Set(), extras = [], test = { on: false, rev: false, nitro: false, rpm: 0 };
+  const listeners = new Set(), extras = [], test = { on: false, rev: false, brake: false, nitro: false, mode: 'neutral', applied: null, tel: null, rpm: 0 }; let hostTurbo;
   function notify(kind) { for (const f of listeners) { try { f(kind, inst, desc); } catch (e) { log.warn('[audio] listener', e); } } }
   function setMuted(m) { st.muted = !!m; save(); applyGain(); render(); }
   return {
@@ -248,7 +259,8 @@ export function createEngineAudio({ sr, log = console } = {}) {
     buildMenu(el) { menuEl = el; render(); }, rerender: () => render(),
     onChange(f) { listeners.add(f); return () => listeners.delete(f); }, // f(kind: 'active'|'preset'|'vehicle', instance, descriptor)
     addMenuExtra(f) { extras.push(f); }, // f(el, row(label), btn(row, text, sel, fn)) appended to the ENGINE SOUND section
-    setTest(o) { if (o.on && !test.on) test.rpm = (sr && sr.telemetry.rpm) || T.idleRpm; Object.assign(test, o); }, get test() { return test; },
+    setTest(o) { if (o.on && !test.on) { test.rpm = (sr && sr.telemetry.rpm) || T.idleRpm; test.applied = null; } Object.assign(test, o); }, get test() { return test; },
+    get hostTurbo() { return hostTurbo; }, set hostTurbo(v) { hostTurbo = typeof v === 'number' && isFinite(v) ? v : undefined; },
     get muted() { return st.muted; }, get active() { return active; }, get plugin() { return desc; }, get instance() { return inst; },
     get ctx() { return ctx; }, get error() { return error; }, get status() { return status; },
   };

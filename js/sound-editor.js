@@ -44,7 +44,7 @@ export function createSoundEditor({ audio, onOpenChange = () => {}, log = consol
 
   const eng = () => { const i = inst(); return i && i.engine && typeof i.engine === 'object' ? i.engine : null; }; // plugin-specific extra (Engine Sim)
   function applyOffset() { const e = eng(), d = desc(); if (e && 'visualOffset' in e && d && db.vo && typeof db.vo[d.id] === 'number') e.visualOffset = db.vo[d.id]; }
-  function setPreview(l) { live = !!l; if (!live) mini = false; if (open) audio.setTest({ on: !live, rev: false, nitro: false }); if (panel) { panel.classList.toggle('live', live); panel.classList.toggle('mini', mini); } render(); }
+  function setPreview(l) { live = !!l; if (!live) mini = false; if (open) audio.setTest({ on: !live, rev: false, brake: false, nitro: false }); if (panel) { panel.classList.toggle('live', live); panel.classList.toggle('mini', mini); } render(); }
   function resetToPreset() {
     const p = slot(false); if (p) { delete p[veh()]; persist(); }
     const d = desc(), i = inst(); if (!i) return;
@@ -72,20 +72,28 @@ export function createSoundEditor({ audio, onOpenChange = () => {}, log = consol
     if (!panel) { panel = document.createElement('div'); panel.id = 'sndEd'; panel.setAttribute('data-snd-own', '');
       panel.addEventListener('keydown', e => e.stopPropagation()); panel.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
       document.body.appendChild(panel); }
-    live = false; mini = false; panel.classList.remove('live', 'mini'); panel.style.display = 'block'; loadViz(); render(); onOpenChange(true); audio.setTest({ on: true, rev: false, nitro: false });
+    live = false; mini = false; panel.classList.remove('live', 'mini'); panel.style.display = 'block'; loadViz(); render(); onOpenChange(true); audio.setTest({ on: true, rev: false, brake: false, nitro: false });
     cancelAnimationFrame(raf); raf = requestAnimationFrame(drawLights); audio.rerender();
   }
   function close() {
     if (!open) return; open = false; live = mini = false; if (panel) { panel.style.display = 'none'; panel.classList.remove('live', 'mini'); } cancelAnimationFrame(raf);
-    audio.setTest({ on: false, rev: false, nitro: false }); onOpenChange(false); audio.rerender();
+    audio.setTest({ on: false, rev: false, brake: false, nitro: false }); onOpenChange(false); audio.rerender();
   }
+  // demo keyboard on the bench: W/↑ gas, S/↓ brake, Shift/Space nitro, N neutral ⇄ drive, C hide / show the controls
+  const KEYS = { KeyW: 'rev', ArrowUp: 'rev', KeyS: 'brake', ArrowDown: 'brake', ShiftLeft: 'nitro', ShiftRight: 'nitro', Space: 'nitro' };
+  const benchOn = () => open && !live && !mini;
+  window.addEventListener('keydown', e => { if (!benchOn() || e.ctrlKey || e.metaKey || e.altKey) return; const k = KEYS[e.code];
+    if (k) { audio.unlock && audio.unlock(); audio.setTest({ [k]: true }); e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (e.code === 'KeyN' && !e.repeat) { audio.setTest({ mode: audio.test.mode === 'drive' ? 'neutral' : 'drive' }); render(); e.stopImmediatePropagation(); }
+    if (e.code === 'KeyC' && !e.repeat) { panel.classList.toggle('focus'); e.stopImmediatePropagation(); } }, true);
+  window.addEventListener('keyup', e => { const k = KEYS[e.code]; if (k && open) audio.setTest({ [k]: false }); }, true);
 
   const S = () => desc().configSchema;
   function render() {
     if (!panel || !open) return; const sc = S(), c = cfg, n = c.cylinders, rot = c.layout === 'rotary';
     const unit = rot ? 'ROTOR' : 'CYL';
     const opt = (list, cur) => list.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${String(v) === String(cur) ? ' selected' : ''}>${esc(l)}</option>`; }).join('');
-    const sl = (k, label, min, max, step, v) => `<label class="se-r"><span>${label}</span><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${v}"><b data-v="${k}">${fmt(v, step)}</b></label>`;
+    const sl = (k, label, min, max, step, v) => `<label class="se-r"><span>${label}</span><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${v}"><input type="number" class="se-n" data-n="${k}" min="${min}" max="${max}" step="${step}" value="${fmt(v, step)}" inputmode="decimal"></label>`;
     const sel = (k, label, list, cur) => `<label class="se-r"><span>${label}</span><select data-k="${k}">${opt(list, cur)}</select></label>`;
     const sec = (id, title, body) => `<details data-sec="${id}"${openSec.has(id) ? ' open' : ''}><summary>${title}</summary>${body}</details>`;
     const counts = sc.countsFor ? sc.countsFor(c.layout) : Array.from({ length: sc.maxCylinders || 16 }, (_, i) => i + 1);
@@ -101,7 +109,9 @@ export function createSoundEditor({ audio, onOpenChange = () => {}, log = consol
 <canvas class="se-lights${viz ? ' se-viz' : ''}"></canvas>
 <div class="se-info" data-info></div>
 <div class="se-test">${seg('preview', 'PREVIEW', [['bench', 'BENCH'], ['live', 'DRIVE ▸']], live ? 'live' : 'bench')}</div>
-<div class="se-test">${live ? '<small>Drive or fly normally: every edit is live. ▾ shrinks this panel.</small>' : `<button class="sb" data-hold="rev">HOLD: REV</button><button class="sb" data-hold="nitro">HOLD: NITRO</button><small>neutral rev bench · tap a ${viz ? 'cylinder' : 'light'} to edit it</small>`}</div>
+${live ? '<div class="se-test"><small>Drive or fly normally: every edit is live. ▾ shrinks this panel.</small></div>' : `<div class="se-test">${seg('bmode', 'MODE', [['neutral', 'NEUTRAL REV'], ['drive', 'DRIVE (AUTO)']], audio.test.mode)}</div>
+<div class="se-test se-ped"><button class="sb" data-hold="rev">GAS</button><button class="sb" data-hold="brake">BRAKE</button><button class="sb" data-hold="nitro">NITRO</button><span class="se-tach" data-tach></span></div>
+<div class="se-test"><small>W/↑ gas · S/↓ brake · Shift/Space nitro · N neutral · C hide controls · tap a ${viz ? 'cylinder' : 'light'} to edit it</small></div>`}
 ${sec('preset', '★ PRESETS', `<label class="se-r"><span>PRESET</span><select data-preset><option value="">— pick a preset —</option>${presets.map(p => `<option value="${esc(p.id)}"${p.id === curP && !saved() ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label><div class="se-note">Current: <b>${esc(c.name || 'Custom')}</b>${saved() ? ' (custom, saved for this vehicle)' : ''}</div>`)}
 ${sec('layout', '⚙ LAYOUT &amp; FIRING', sel('layout', 'LAYOUT', sc.layouts, c.layout) +
   sel('cylinders', rot ? 'ROTORS' : 'CYLINDERS', counts.map(v => [v, rot ? v + ' rotor' + (v > 1 ? 's' : '') : v]), n) +
@@ -126,8 +136,8 @@ ${sec('exh', '🔊 EXHAUST &amp; SOUND', sl('master', 'MASTER', 0, 1.6, 0.01, c.
   seg('exhaust', 'EXHAUST', [['single', 'Single'], ['dual', 'Dual (per bank)']], c.exhaust) + sl('crossover', 'X-PIPE', 0, 1, 0.01, c.crossover) +
   sl('intakeVol', 'INTAKE', 0, 1.5, 0.01, c.intakeVol) + sl('mechVol', 'VALVETRAIN', 0, 1.5, 0.01, c.mechVol) + sl('inductionVol', 'TURBO/BLOWER', 0, 1.5, 0.01, c.inductionVol) +
   (vo !== null ? sl('visualOffset', 'LIGHT SYNC ms', -150, 250, 1, vo) + '<div class="se-note">Lights already compensate output latency; Bluetooth headphones may need +100…200 ms.</div>' : ''))}
-${car ? sec('car', '🚗 CAR &amp; GEARBOX', sl('car.mass', 'CAR MASS kg', 150, 3000, 10, car.mass) + sl('car.final', 'FINAL DRIVE', 2, 12, 0.05, car.final) +
-  `<div class="se-note">Gears: ${(car.gears || []).join(' / ')}. Used by the WAV render and the standalone demo; in-game the rpm comes from the game's own drivetrain. BENCH = the demo's “Neutral rev”, DRIVE = “Drive”.</div>`) : ''}
+${car ? sec('car', '🚗 CAR &amp; GEARBOX', sl('car.mass', 'CAR MASS kg', 150, 3000, 10, car.mass) + sl('car.final', 'FINAL DRIVE', 2, 6, 0.05, car.final) +
+  `<div class="se-note">Gears: ${(car.gears || []).join(' / ')}. Drives the BENCH in DRIVE (AUTO) mode and the WAV render, exactly like the demo; while driving the game, rpm comes from the car's own drivetrain (VEHICLE → ⚙ ENGINE / POWER).</div>`) : ''}
 ${sec('save', '💾 SAVE / SHARE', `<div class="se-row"><input type="text" data-name placeholder="name" maxlength="24"><button class="sb" data-act="save">SAVE AS</button></div>
   <div class="se-row">${Object.keys(db.named).map(k => `<span class="se-named"><button class="sb" data-load="${esc(k)}">${esc(k)}</button><button class="sb" data-del="${esc(k)}">✕</button></span>`).join('') || '<small>no saved sounds yet</small>'}</div>
   <div class="se-row"><button class="sb" data-act="export">EXPORT JSON</button><button class="sb" data-act="import">IMPORT</button>${e && e.constructor && e.constructor.renderOffline ? '<button class="sb" data-act="wav">RENDER 6 s WAV</button>' : ''}<button class="sb" data-act="reset">RESET TO PRESET</button></div>
@@ -144,7 +154,7 @@ ${sec('save', '💾 SAVE / SHARE', `<div class="se-row"><input type="text" data-
       const k = inp.dataset.k, isRange = inp.type === 'range';
       const handler = () => {
         let v = inp.value; if (isRange || /^(cylinders|bankAngle|stroke)$/.test(k)) v = +v;
-        if (isRange) { const b = panel.querySelector(`[data-v="${k}"]`); if (b) b.textContent = fmt(v, +inp.step); }
+        if (isRange) { const b = panel.querySelector(`[data-n="${k}"]`); if (b && document.activeElement !== b) b.value = fmt(v, +inp.step); }
         if (k === 'visualOffset') { const e = eng(), d = desc(); if (e) e.visualOffset = v / 1000; db.vo = db.vo || {}; db.vo[d.id] = v / 1000; persist(); return; }
         if (k.startsWith('car.')) return apply({ car: Object.assign({}, cfg.car, { [k.slice(4)]: v }) }, !isRange);
         if (k.startsWith('c.')) { const f = k.slice(2), cyl = cfg.cyl.map(o => ({ ...o })); cyl[selCyl][f] = v; const p = { cyl }; if (f === 'fire') p.manualFire = true; return apply(p, !isRange); }
@@ -155,8 +165,13 @@ ${sec('save', '💾 SAVE / SHARE', `<div class="se-row"><input type="text" data-
       };
       inp.addEventListener(isRange ? 'input' : 'change', handler);
     });
+    panel.querySelectorAll('[data-n]').forEach(n => { const commit = () => { const r = panel.querySelector(`input[type=range][data-k="${n.dataset.n}"]`); if (!r) return;
+      let v = parseFloat(String(n.value).replace(',', '.')); if (!isFinite(v)) { n.value = fmt(+r.value, +r.step); return; }
+      v = clamp(v, +r.min, +r.max); r.value = v; n.value = fmt(v, +r.step); r.dispatchEvent(new Event('input')); };
+      n.addEventListener('change', commit); n.addEventListener('keydown', e => { if (e.key === 'Enter') { commit(); n.blur(); } }); });
     panel.querySelectorAll('[data-seg]').forEach(b => b.onclick = () => { const k = b.dataset.seg, raw = b.dataset.val, v = /^-?\d+(\.\d+)?$/.test(raw) ? +raw : raw;
       if (k === 'preview') return setPreview(v === 'live');
+      if (k === 'bmode') { audio.setTest({ mode: v }); return render(); }
       const p = { [k]: v }; if (k === 'stroke') p.manualFire = false; apply(p, true); });
     const ps = panel.querySelector('[data-preset]'); if (ps) ps.addEventListener('change', () => { if (!ps.value) return; selCyl = 0; audio.setPreset(ps.value); cfg = inst().getConfig(); openSec.add('preset'); render(); });
     const fo = panel.querySelector('[data-fo]');
@@ -206,6 +221,10 @@ ${sec('save', '💾 SAVE / SHARE', `<div class="se-row"><input type="text" data-
     if (!open) return; raf = requestAnimationFrame(drawLights);
     const cv = panel.querySelector('.se-lights'); if (!cv || !cfg) return;
     const vs0 = inst() && inst().getVisualState ? inst().getVisualState() : null;
+    const tt = panel.querySelector('[data-tach]'), mt = audio.test.tel;
+    if (tt) { const T = audio.telemetry; tt.textContent = `${Math.round(T.rpm)} rpm · ${mt && audio.test.on ? mt.gear : T.gear || 'N'} · ${Math.round(T.speedKmh || 0)} km/h · boost ${Math.round((mt ? mt.boost : T.turbo || 0) * 100)}%${T.limiter ? ' · LIMIT' : ''}`; }
+    if (viz && vs0 && !mini && !live && mt && audio.test.on) { try { viz.selected = selCyl;
+      viz.draw(Object.assign({}, cfg, { name: cfg.name || 'Custom', firingOrder: cfg.firingOrder || [] }), vs0, Object.assign({}, mt, { rpm: vs0.rpm || mt.rpm })); return; } catch (e) { log.warn('[sound-editor] viz', e); viz = null; render(); return; } }
     if (viz && vs0 && !mini) { try { const T = audio.telemetry; viz.selected = selCyl; viz.resize(); const g = viz.g; g.setTransform(viz.dpr, 0, 0, viz.dpr, 0, 0); g.clearRect(0, 0, viz.W, viz.H);
       viz.drawDiagram(Object.assign({}, cfg, { name: cfg.name || 'Custom', firingOrder: cfg.firingOrder || [] }), vs0, { nitro: !!T.nitro, limiter: !!T.limiter, rpm: vs0.rpm, gear: T.gear, speedKmh: (T.speed || 0) * 3.6, shifting: !!T.shifting, shiftFlash: 0, nitroTank: 1 }, { x: 2, y: 2, w: viz.W - 4, h: viz.H - 4 }); return; } catch (e) { viz = null; render(); return; } }
     const w = cv.clientWidth | 0; if (w && cv.width !== w * 2) { cv.width = w * 2; cv.height = 68; }

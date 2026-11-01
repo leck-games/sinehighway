@@ -8,6 +8,8 @@ import * as W from './world.js';
 import { NAME as GAME_NAME, VERSION as GAME_VERSION, VERSIONS_URL } from './version.js'; // 'Sine Rally V0.1'
 import { createEngineAudio } from './engine-audio.js'; // engine sound plugin host (PLUGIN_API.md); talks to plugins only via the API
 import { createSoundEditor } from './sound-editor.js';
+import * as PWR from './power.js';
+import { openPowerPanel } from './power-ui.js';
 import { createUiEditor } from './ui-editor.js'; // SineRally UI: HUD layout editor (☰ → EDIT UI, key U)
 import { U, objMat, puffMat, decalMat, postMat, precipMat } from './shaders.js';
 import { rockVariants, fuelCan, beacon, trackProps } from './models.js';
@@ -199,7 +201,7 @@ function loadAttach(id) { return store.get('srp_attach_' + id, getVehicle(id).de
 function useVehicle(id, attach) {
   id = getVehicle(id).id; const a = attach || loadAttach(id);
   if (vis) { vis.group.remove(rig.root); carRoot.remove(vis.group); if (flameOrig) vis.flame.material = flameOrig; vis.dispose(); }
-  rig.setVehicle(id, a); veh = rig.state; vDef = rig.vehicle; veh.assist.stab = assist.stab; veh.assist.tc = assist.tc; lastGear = veh.gear;
+  rig.setVehicle(id, a); veh = rig.state; vDef = rig.vehicle; veh.assist.stab = assist.stab; veh.assist.tc = assist.tc; lastGear = veh.gear; PWR.apply(veh, vDef); // per-build power curve (VEHICLE → ENGINE / POWER)
   vis = buildVehicle(THREE, vDef, carMat); flameOrig = vis.flame.material; vis.flame.material = flameMat;
   vis.group.add(rig.root); carRoot.add(vis.group); comicify(rig.root);
   const d = veh.P.dims || [2, 1.5, 4.4]; shadow.userData.w = d[0] * 1.5; shadow.userData.l = d[2] * 1.05;
@@ -598,21 +600,28 @@ function showTab(t) { if (!TABS[t]) t = 'drive'; mTab = t;
   if (t === 'vehicle') { if (!selector) vehRow(); } else if (selector) { selector.close(); selector = null; $('mVeh').innerHTML = ''; } // the 3D preview only runs on its tab
   if (t === 'sound') audio.buildMenu($('mSnd')); $('mPanes').scrollTop = 0; }
 document.querySelectorAll('#mTabs .mtab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+let vSub = null; // VEHICLE → CARS sub-menu: null | 'power'
 let vTab = null; // VEHICLE tab: 'car' | 'plane' (defaults to the current craft)
 function vehRow() { // VEHICLE: CARS (physics module's selector) / PLANES (plane selector), each a second small WebGL canvas closed with the menu
   const mv = $('mVeh'); if (selector) { selector.close(); selector = null; }
-  const tab = vTab || craft; mv.innerHTML = ''; const h = mk('div', 'mrow');
+  const tab = vTab || craft; mv.innerHTML = '';
+  if (tab === 'car' && vSub === 'power') { $('mAtt').innerHTML = ''; // ⚙ ENGINE / POWER sub-panel (‹ BACK returns to the car list)
+    openPowerPanel({ container: mv, def: vDef, getState: () => rig.state, onChange: c => { PWR.apply(rig.state, vDef, c); }, onBack: () => { vSub = null; vehRow(); } }); $('mPanes').scrollTop = 0; return; }
+  const h = mk('div', 'mrow');
   for (const [k, t] of [['car', '🚗 CARS'], ['plane', '✈ PLANES']]) { const b = mk('button', 'sb vtab mbig' + (tab === k ? ' sel' : ''), t); b.id = 'vt_' + k; b.onclick = () => { vTab = k; vehRow(); }; h.appendChild(b); }
   mv.appendChild(h); const box = document.createElement('div'); mv.appendChild(box);
   const small = innerHeight < 500, size = small ? [200, 113] : [240, 136];
   if (tab === 'plane') { $('mAtt').innerHTML = ''; selector = openPlaneSelector({ container: box, current: plDef ? plDef.id : (localStorage.getItem('sinerally_plane') || 'cub'), size, onPick: id => { setCraft('plane', id); buildMenu(); } }); }
-  else { selector = openSelector({ THREE, container: box, current: vDef.id, size, onPick: id => { if (craft === 'plane') setCraft('car'); setVehicle(id); attRow(); buildMenu(); } }); attRow(); }
+  else { selector = openSelector({ THREE, container: box, current: vDef.id, size, onPick: id => { if (craft === 'plane') setCraft('car'); setVehicle(id); attRow(); buildMenu(); powRow(); } }); powRow(); attRow(); }
+  function powRow() { let r = $('vPow'); if (!r) { r = mk('div', 'mrow'); r.id = 'vPow'; mv.appendChild(r); } r.innerHTML = '';
+    const c = rig.state.__power ? rig.state.__power.cfg : null, hp = c ? c.hp : PWR.stockOf(rig.state.__stockP || rig.state.P).hp;
+    const b = mk('button', 'sb mbig' + (c ? ' sel' : ''), `⚙ ENGINE / POWER · ${hp.toLocaleString('en-US')} hp${c ? '' : ' (stock)'} ▸`); b.id = 'vPowBtn'; b.onclick = () => { vSub = 'power'; vehRow(); }; r.appendChild(b); }
 }
 function attRow() { const ma = $('mAtt'); ma.innerHTML = '<div class="msec">ATTACHMENTS · ' + vDef.name + '</div>'; const c = document.createElement('div'); ma.appendChild(c);
   renderPicker({ container: c, vehicle: vDef, selected: rig.attach, onChange: ids => { setAttachments(ids); buildMenu(); } }); }
 let menuOpen = false;
 function openMenu(o, tab) { menuOpen = !!o; $('menu').classList.toggle('on', menuOpen); $('tMenu').classList.toggle('sel', menuOpen); if (menuOpen) quick(false);
-  if (menuOpen) { vTab = null; buildMenu(); showTab(tab || mTab); } else { if (selector) { selector.close(); selector = null; } $('mVeh').innerHTML = ''; sndBtn(); } }
+  if (menuOpen) { vTab = null; vSub = null; buildMenu(); showTab(tab || mTab); } else { if (selector) { selector.close(); selector = null; } $('mVeh').innerHTML = ''; sndBtn(); } }
 $('tMenu').onclick = () => openMenu(!menuOpen); $('mnClose').onclick = () => openMenu(false);
 // ---------- ⚙ quick-settings tray: RESET · GFX · ARC/NRM · HUD mode · TILT · FPS · SOUND · MAP (closes on an outside tap or after 8 s) ----------
 let qOpen = false, qT = 0;
@@ -821,7 +830,7 @@ function planeTelemetry() { // fills the sound plugin API from the flight model 
 const camPos = new THREE.Vector3(veh.p.x, veh.p.y + 6, veh.p.z - 12), look = new THREE.Vector3(), camDir = new THREE.Vector3(0, 0, 1);
 const tv = new THREE.Vector3(), RV = new THREE.Vector3(), camTrees = []; let camBack = 8, camLow = 0;
 let last = performance.now(), acc = 0, fpsT = 0, frames = 0, fps = 0, shake = 0, tFrame = 0;
-const STEP = 1 / 120, stats = { fps: 0, physMs: 0, frameMs: 0, minFps: 999 };
+let pwSpool = 0; const STEP = 1 / 120, stats = { fps: 0, physMs: 0, frameMs: 0, minFps: 999 };
 const focus = { x: 0, y: 0, z: 0 };
 function updateWorld(force) { updateScenery(veh.p.x, veh.p.z); if (force) scx = 1e9, updateScenery(veh.p.x, veh.p.z); }
 applyQuality(); updateWorld(true);
@@ -835,7 +844,7 @@ function frame(now) {
   if (editor.benching && !PLN) { inp.gas = inp.brake = inp.boost = 0; inp.steer = 0; inp.hand = 1; } // sound editor open: car input paused (audio keeps running)
   if (PLN && (menuOpen || editor.benching)) acc = 0; // planes can't park in mid-air: the menu / sound editor pause the flight
   acc += dt; let steps = 0; const tp = performance.now(); penv.arcade = hMode === 'arcade';
-  while (acc >= STEP && steps < 12) { simT += STEP; if (PLN) stepPlane(pl, pin, STEP, penv); else { rig.step(inp, STEP); collideRocks(veh); AFX.collide(veh.p, veh.v); } acc -= STEP; steps++; }
+  while (acc >= STEP && steps < 12) { simT += STEP; if (PLN) stepPlane(pl, pin, STEP, penv); else { rig.step(inp, STEP); pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); AFX.collide(veh.p, veh.v); } acc -= STEP; steps++; }
   if (PLN && pl.crashed && pl.crashT > 2.6) planeToRunway(pickField(plDef, pl.p.x, pl.p.z));
   AFX.update(dt);
   if (steps === 12) acc = 0;
@@ -894,7 +903,7 @@ function frame(now) {
   { const show = veh.cargo.capacity > 0 && veh.cargo.logs > 0; if (show !== unlShown) { unlShown = show; $('bUnl').style.display = show ? 'block' : 'none'; } if (show) $('bUnl').textContent = 'UNLOAD ' + veh.cargo.logs; } }
   if (msgT > 0 && performance.now() >= msgT) { msgT = 0; $('msg').textContent = ''; $('msg').classList.remove('show'); }
   raceStarts(false); RR.update(dt, camera, race && curTrack ? curTrack.id : null); if (compassOn) { camera.updateMatrixWorld(); compass.update(camera, veh.p.x, veh.p.z, compassMarkers()); }
-  updateTelemetry(); minimap(Math.atan2(camDir.x, camDir.z)); gauge(); tickWp(Math.atan2(camDir.x, camDir.z)); updateLabels(dt); audio.frame(dt);
+  updateTelemetry(); minimap(Math.atan2(camDir.x, camDir.z)); gauge(); tickWp(Math.atan2(camDir.x, camDir.z)); updateLabels(dt); audio.hostTurbo = !PLN && veh.__power && veh.__power.cfg.spool ? pwSpool : undefined; audio.frame(dt);
   if (!QS.has('nopost')) { renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.render(postScene, postCam); }
   else { renderer.setRenderTarget(null); renderer.render(scene, camera); }
   stats.frameMs = performance.now() - t0;
@@ -905,7 +914,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 // release identity from js/version.js (title, menu tag, versions link)
 document.title = GAME_NAME; { const t = document.getElementById('verTag'); if (t) t.textContent = 'V' + GAME_VERSION; const v = document.getElementById('versionsLink'); if (v) v.href = VERSIONS_URL; }
-window.__st = { version: GAME_NAME, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
+window.__st = { version: GAME_NAME, PWR, get vSub() { return vSub; }, openPower: () => { openMenu(true, 'vehicle'); vTab = 'car'; vSub = 'power'; vehRow(); }, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
   get q() { return qName; }, setQ(q) { qName = q; applyQuality(); }, get x() { return veh.p.x; }, get z() { return veh.p.z; }, get y() { return veh.p.y; },
   place(x, z, yaw = 0) { spawn(x, z, yaw); }, /* car move that keeps the running race (tests) */ teleport(x, z, yaw = 0) { race = null; if (craft === 'plane') { planeAirStart(x, z, yaw); return; } spawn(x, z, yaw); updateWorld(true); updateCans(true); }, toBiome(name, yaw = 0) { const p = T.findBiome(name, veh.p.x, veh.p.z); if (p) this.teleport(p.x, p.z, yaw); return p; },
   setVehicle, useVehicle, setAttachments, get vName() { return vDef.id; }, openMap, openMenu, setWp, get wx() { return wx; }, setWx(m, snap = true) { wxMode = m; applyWx(); if (snap) T.snapWeather(); }, set tod(v) { tod = v; timeMode = 'Fixed'; applyTime(); },
