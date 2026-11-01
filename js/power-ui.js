@@ -19,7 +19,7 @@ export function openPowerPanel({ container, def, getState, onChange = () => {}, 
 <div class="pw-pre"></div>
 <div class="pw-main"><canvas class="pw-cv" width="760" height="330"></canvas><div class="pw-side"><div class="pw-read"></div><div class="pw-sl"></div></div></div><div class="mnote pw-note">Drag the dots to shape the torque curve (rpm 0 → redline). The curve is scaled so its peak equals PEAK POWER. Saved per build.</div>`;
   const cv = el.querySelector('canvas'), g = cv.getContext('2d'), read = el.querySelector('.pw-read'), pre = el.querySelector('.pw-pre'), sl = el.querySelector('.pw-sl');
-  const commit = () => { PW.set(def.id, cfg); onChange(cfg); draw(); readout(); presets(); };
+  const commit = () => { PW.set(def.id, cfg); onChange(cfg); draw(); readout(); presets(); if (sl.__ru) sl.__ru(); };
   // presets
   function presets() {
     pre.innerHTML = ''; const cur = PW.get(def.id) ? cfg.preset : 'stock';
@@ -50,6 +50,11 @@ export function openPowerPanel({ container, def, getState, onChange = () => {}, 
     row('hp', 'PEAK POWER', PW.HP_MIN, PW.HP_MAX, 1, cfg.hp, 'hp', hpToS, sToHp);
     row('redline', 'REDLINE', PW.RED_MIN, PW.RED_MAX, 50, cfg.redline, 'rpm');
     row('idle', 'IDLE', PW.IDLE_MIN, PW.IDLE_MAX, 25, cfg.idle, 'rpm');
+    // throttle ramp in ms: 0 = AUTO (slower pedal for more hp) — the number box then shows what AUTO resolves to (greyed)
+    const rr = row('resp', 'THROTTLE', 0, PW.RESP_MAX, 10, cfg.resp, 'ms'), nb = rr.querySelector('input[type=number]'), un = rr.querySelector('small');
+    rr.title = 'Throttle response: time from 0 to full throttle. 0 = AUTO (by peak power)';
+    const ru = () => { const a = !cfg.resp; un.textContent = a ? 'AUTO' : 'ms'; nb.placeholder = Math.round(PW.autoResp(cfg.hp) * 1000); if (a) nb.value = ''; };
+    ru(); sl.__ru = ru;
   }
   // graph
   const PAD = { l: 50, r: 54, t: 18, b: 34 };

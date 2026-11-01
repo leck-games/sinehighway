@@ -20,6 +20,16 @@ let fail = false; const check = (ok, what, extra = '') => { console.log((ok ? 'O
     const t0 = JSON.stringify(s.P.torque); PW.apply(s, d, { ...st }); const pk = PW.peakOf(s.P.torque, s.P.redline).hp; PW.apply(s, d, null);
     check(Math.abs(pk - st.hp) / st.hp < 0.03 && JSON.stringify(s.P.torque) === t0, `${id}: stock curve round-trips (apply → reset restores exact params)`, `${pk.toFixed(0)} vs ${st.hp}`);
   }
+  // throttle ramp: time to full pedal by hp (AUTO), custom ms, lift-off faster than apply, eased onset, binary input → progressive
+  const ramp = (s, dt = 1 / 120) => { let up = 0, dn = 0, first = 0; s.__thrX = 0; for (let i = 0; i < 400; i++) { const g = PW.throttle(s, dt, 1); if (i === 2) first = g; if (g >= 1) { up = (i + 1) * dt; break; } }
+    for (let i = 0; i < 400; i++) { if (PW.throttle(s, dt, 0) <= 0) { dn = (i + 1) * dt; break; } } return { up, dn, first }; };
+  { const d = VH.getVehicle(ids[0]), s = PH.createState(d.physics); s.rpm = s.P.redline * 0.5; const st = PW.stockOf(s.P);
+    const r0 = ramp(s); check(r0.up >= 0.08 && r0.up <= 0.16 && r0.dn < r0.up, `throttle ramp stock (${st.hp} hp): ~0.1 s apply, faster lift`, `apply ${r0.up.toFixed(3)} s, lift ${r0.dn.toFixed(3)} s`);
+    let prev = 0; for (const hp of [400, 1000, 3000, 10000]) { PW.apply(s, d, Object.assign({}, st, { hp })); const r = ramp(s);
+      check(r.up >= prev - 1e-9 && r.dn < r.up * 0.6 && r.first < 0.2, `throttle ramp AUTO ${hp} hp: monotonic, lift < 0.6x apply, soft onset`, `apply ${r.up.toFixed(3)} s, lift ${r.dn.toFixed(3)} s, 3rd step ${r.first.toFixed(3)}`); prev = r.up;
+      if (hp === 10000) check(r.up >= 0.6 && r.up <= 0.85, '10000 hp AUTO apply in 0.6–0.85 s', r.up.toFixed(3) + ' s'); }
+    PW.apply(s, d, Object.assign({}, st, { hp: 10000, resp: 250 })); const rc = ramp(s); check(Math.abs(rc.up - 0.25) < 0.03, 'custom THROTTLE RESPONSE 250 ms honoured', rc.up.toFixed(3) + ' s');
+    PW.apply(s, d, null); check(PW.norm({ resp: 5000 }).resp === PW.RESP_MAX && PW.norm({ resp: -3 }).resp === 0, 'resp clamps to 0..1000 ms'); }
   // 10 000 hp drive
   const mkWorld = surf => surf === 'hills' ? { heightAt: (x, z) => 3 * Math.sin(x * 0.045) * Math.cos(z * 0.035) + 1.2 * Math.sin(z * 0.11), surfaceAt: () => 'dirt' } : { heightAt: () => 0, surfaceAt: () => surf };
   const rows = [];
@@ -30,7 +40,7 @@ let fail = false; const check = (ok, what, extra = '') => { console.log((ok ? 'O
     const dt = 1 / 120; let bad = 0, vmax = 0, t100 = 0, maxRpm = 0, maxOm = 0, maxGear = 1, flips = 0;
     for (let i = 0; i < 120 * 40; i++) {
       const t = i * dt, inp = { gas: 1, brake: 0, steer: t > 25 && t < 30 ? 0.35 : 0, boost: t > 12 && t < 16 ? 1 : 0, hand: 0 };
-      PH.step(s, inp, dt, world); PW.tick(s, dt, inp.gas);
+      PH.step(s, Object.assign({}, inp, { gas: PW.throttle(s, dt, inp.gas) }), dt, world); PW.tick(s, dt, inp.gas);
       const sp = Math.hypot(s.v.x, s.v.y, s.v.z);
       if (![s.p.x, s.p.y, s.p.z, s.v.x, s.v.y, s.v.z, s.w.x, s.w.y, s.w.z, s.q.w, s.rpm].every(Number.isFinite)) { bad++; break; }
       vmax = Math.max(vmax, sp); if (!t100 && sp > 27.78) t100 = t; maxRpm = Math.max(maxRpm, s.rpm); maxGear = Math.max(maxGear, s.gear);

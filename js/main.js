@@ -844,7 +844,7 @@ function frame(now) {
   if (editor.benching && !PLN) { inp.gas = inp.brake = inp.boost = 0; inp.steer = 0; inp.hand = 1; } // sound editor open: car input paused (audio keeps running)
   if (PLN && (menuOpen || editor.benching)) acc = 0; // planes can't park in mid-air: the menu / sound editor pause the flight
   acc += dt; let steps = 0; const tp = performance.now(); penv.arcade = hMode === 'arcade';
-  while (acc >= STEP && steps < 12) { simT += STEP; if (PLN) stepPlane(pl, pin, STEP, penv); else { rig.step(inp, STEP); pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); AFX.collide(veh.p, veh.v); } acc -= STEP; steps++; }
+  while (acc >= STEP && steps < 12) { simT += STEP; if (PLN) stepPlane(pl, pin, STEP, penv); else { const g0 = inp.gas; inp.gas = PWR.throttle(veh, STEP, g0); rig.step(inp, STEP); inp.gas = g0; pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); AFX.collide(veh.p, veh.v); } acc -= STEP; steps++; }
   if (PLN && pl.crashed && pl.crashT > 2.6) planeToRunway(pickField(plDef, pl.p.x, pl.p.z));
   AFX.update(dt);
   if (steps === 12) acc = 0;

@@ -7,6 +7,7 @@ export const N = 8, HP_MAX = 10000, HP_MIN = 20;
 export const RED_MIN = 2500, RED_MAX = 16000, IDLE_MIN = 400, IDLE_MAX = 2500;
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+export const RESP_MAX = 1000;
 export const HP_PER_KW = 1.341022, K_HP = 7120.9; // hp = T[Nm] * rpm / 7120.9
 export const PRESETS = {
   na:       { name: 'NA', nodes: [0.55, 0.66, 0.78, 0.88, 0.96, 1, 0.94, 0.8] },
@@ -35,7 +36,7 @@ export function stockOf(P) {
   const red = P.redline, tr = P.torqueRpm || 1, raw = [];
   for (let i = 0; i < N; i++) raw.push(tq(P.torque, red * i / (N - 1), tr));
   const mx = Math.max(...raw), pk = peakOf(P.torque, red, tr);
-  return { hp: Math.round(pk.hp), idle: P.idle, redline: red, nodes: raw.map(v => +(v / mx).toFixed(3)), preset: 'stock', spool: 0 };
+  return { hp: Math.round(pk.hp), idle: P.idle, redline: red, nodes: raw.map(v => +(v / mx).toFixed(3)), preset: 'stock', spool: 0, resp: 0 };
 }
 export function norm(c, stock) {
   const s = stock || { hp: 400, idle: 900, redline: 7000, nodes: PRESETS.na.nodes };
@@ -46,6 +47,7 @@ export function norm(c, stock) {
   const n = Array.isArray(o.nodes) && o.nodes.length === N ? o.nodes : s.nodes;
   o.nodes = n.map(v => clamp(num(+v, 0.5), 0.05, 1));
   o.spool = o.spool ? 1 : 0;
+  o.resp = clamp(Math.round(num(+o.resp, 0)), 0, RESP_MAX); // throttle ramp in ms, 0 = AUTO (by hp)
   return o;
 }
 /** Torque table in Nm (physics format) whose peak power over 0..redline equals cfg.hp. */
@@ -77,6 +79,27 @@ export function apply(state, def, cfg = get(def.id)) {
   P.vmax = Math.min(S.vmax * Math.min(1.6, Math.cbrt(r)), Math.max(S.vmax, 90));
   state.__power = { cfg: c, base: P.torque.map(p => p.slice()), spool: c.spool ? 0 : 1 };
   return c;
+}
+/** AUTO throttle ramp (seconds 0 → full) for a peak power: ~0.1 s up to ~500 hp, rising (log) to ~0.7 s at 10 000 hp. */
+export function autoResp(hp) { const x = clamp(Math.log(Math.max(1, hp) / 500) / Math.log(HP_MAX / 500), 0, 1); return 0.1 + 0.6 * x; }
+/** Current apply / lift ramp times (s) for a live state: custom ms from the build, else AUTO by its peak hp. Lift-off is ~2.5x faster. */
+export function respOf(state) {
+  const pw = state.__power; let hp;
+  if (pw) { if (pw.cfg.resp) return { up: pw.cfg.resp / 1000, down: Math.max(0.04, pw.cfg.resp / 2500) }; hp = pw.cfg.hp; }
+  else { const S = state.__stockP || state.P; if (state.__hp0 === undefined || state.__hp0k !== S.torque) { state.__hp0 = peakOf(S.torque, S.redline, S.torqueRpm || 1).hp; state.__hp0k = S.torque; } hp = state.__hp0; }
+  const up = autoResp(hp); return { up, down: Math.max(0.04, up * 0.4) };
+}
+/**
+ * Throttle ramp (game-side, per physics step): a binary key / touch button becomes a progressive pedal so big power
+ * comes in over ~0.1–0.8 s instead of instantly. Linear pedal travel with a soft (eased) onset for traction; lifting
+ * is faster than applying. Engine inertia: the last 30 % of travel is slower while the revs are low.
+ */
+export function throttle(state, dt, gas) {
+  const tgt = clamp(gas, 0, 1), r = respOf(state); let x = state.__thrX || 0;
+  if (tgt > x) { const lowRev = state.P && state.P.redline ? clamp(state.rpm / state.P.redline / 0.35, 0.6, 1) : 1; x = Math.min(tgt, x + dt / r.up * (x > 0.7 ? lowRev : 1)); }
+  else x = Math.max(tgt, x - dt / r.down);
+  state.__thrX = x;
+  return x <= 0 ? 0 : x >= 1 ? 1 : x * x * (2 - x); // eased onset (slope 0 → 1 at full), exact 0 / 1 at the ends
 }
 /**
  * Per-frame (game-side): turbo lag + a wheel over-rev guard for big power.
