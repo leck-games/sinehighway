@@ -5,6 +5,20 @@ This is the first numbered release of Sine Rally. It is built on the finished [S
 - Release: git tag `v0.1`, plus a GitHub Release named "Sine Rally V0.1".
 - The version is set in `js/version.js`, which drives the page title and the menu tag. For a new release, bump it, update `index.html`/`manifest.webmanifest`, tag it, and add the build to the versions repo (see its README).
 
+## Roads over terrain · throttle ramp · compact compass · tree variety (V0.2-dev, 2026-11-01)
+- **Roads win over terrain**: the ground is carved/flattened to every road (exact road-foot projection, crossing pins with a
+  max-bed rule, bridge spans, junction/loop seam fixes, road-safe render grids), so terrain no longer pokes through roads and
+  roads no longer float. Check: `tools/test-roads.cjs` (pokes/floats per road + render grids). Shots: `tools/shot-roads.cjs`.
+- **Throttle response scales with power** (`js/power.js` `throttle()`): progressive pedal on keyboard and touch, ARCADE and
+  NORMAL — AUTO ≈ 0.1 s at stock up to ≈ 0.7 s at 10 000 hp, lifting is faster than applying, soft onset, a little low-rev
+  inertia. Override in ENGINE / POWER → **THROTTLE** (0 = AUTO, up to 1000 ms).
+- **Compass strip compacted** (`js/compass.js`): marker distance labels were clipped at the bottom of the top HUD strip; the
+  power-graph legend now sits above the plot.
+- **Tree variety** (`js/terrain/trees.js`): 12 species — conifer, broadleaf, acacia, scrub, cactus, dead + spruce, birch, oak,
+  poplar, bush, bare — mixed by altitude and moisture, autumn-coloured patches, per-tree scale/hue/lean. Still impostor-only
+  (one instanced card per tree, one draw call, same comic look and triangle budget). Shots: `tools/shot-trees.cjs`
+  → `shots/trees_variety_before_after.png`.
+
 ## Power curves + engine-sim fine tuning (V0.2-dev, 2026-11-01)
 - **☰ → VEHICLE → ⚙ ENGINE / POWER** (per build, saved in localStorage `sinerally_power1`): drag 8 rpm nodes to shape the
   torque curve, PEAK POWER 20–10 000 hp (log slider + number, kW shown), REDLINE, IDLE, presets STOCK · NA · TURBO · DIESEL ·
