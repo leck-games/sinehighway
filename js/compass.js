@@ -31,18 +31,18 @@ export function createCompass(cv) {
     const hd = bearing(fx, fz), hfov = 2 * Math.atan(Math.tan(camera.fov * D2R / 2) * camera.aspect), half = hfov / 2, k = W / hfov;
     state.heading = (hd / D2R + 360) % 360; state.hfov = hfov / D2R;
     c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
-    const sh = 20; // tick strip height
+    const sh = 16; // tick strip height (compact: strip 16 + icons + distance labels all fit the 44px canvas)
     c.fillStyle = 'rgba(17,17,17,.55)'; c.beginPath(); c.roundRect ? c.roundRect(0, 1, W, sh, 6) : c.rect(0, 1, W, sh); c.fill();
     c.textAlign = 'center'; c.textBaseline = 'middle';
     const step = 5; const a0 = Math.floor((state.heading - state.hfov / 2) / step) * step;
     for (let a = a0; a <= state.heading + state.hfov / 2 + step; a += step) {
       const x = W / 2 + wrap((a - state.heading) * D2R) * k, n = ((a % 360) + 360) % 360; if (x < -10 || x > W + 10) continue;
       const card = n % 90 === 0, inter = n % 45 === 0;
-      if (card || inter) { const L = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][n / 45]; c.font = card ? '900 13px "Arial Black",system-ui' : '800 10px system-ui';
-        c.lineWidth = 3; c.strokeStyle = '#111'; c.strokeText(L, x, 11.5); c.fillStyle = n === 0 ? '#ff6a1a' : card ? '#fff' : '#ffe9a8'; c.fillText(L, x, 11.5); }
-      else { c.strokeStyle = 'rgba(255,248,224,.85)'; c.lineWidth = n % 15 === 0 ? 2 : 1; const h = n % 15 === 0 ? 7 : 4; c.beginPath(); c.moveTo(x, sh + 1 - h); c.lineTo(x, sh + 1); c.stroke(); }
+      if (card || inter) { const L = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][n / 45]; c.font = card ? '900 11.5px "Arial Black",system-ui' : '800 9px system-ui';
+        c.lineWidth = 3; c.strokeStyle = '#111'; c.strokeText(L, x, 9.5); c.fillStyle = n === 0 ? '#ff6a1a' : card ? '#fff' : '#ffe9a8'; c.fillText(L, x, 9.5); }
+      else { c.strokeStyle = 'rgba(255,248,224,.85)'; c.lineWidth = n % 15 === 0 ? 2 : 1; const h = n % 15 === 0 ? 6 : 3; c.beginPath(); c.moveTo(x, sh + 1 - h); c.lineTo(x, sh + 1); c.stroke(); }
     }
-    c.fillStyle = '#ffd23c'; c.strokeStyle = '#111'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(W / 2 - 5, sh + 1); c.lineTo(W / 2 + 5, sh + 1); c.lineTo(W / 2, sh - 5); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = '#ffd23c'; c.strokeStyle = '#111'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(W / 2 - 5, sh + 1); c.lineTo(W / 2 + 5, sh + 1); c.lineTo(W / 2, sh - 4); c.closePath(); c.fill(); c.stroke();
     // markers: in-view only (soft fade over the outer 25 % of the half-angle), nearest/most important first, no overlaps
     const list = [], pins = []; let hidden = 0;
     for (const m of markers) { const dx = m.x - px, dz = m.z - pz, d = Math.hypot(dx, dz); const rel = d < 1 ? 0 : wrap(bearing(dx, dz) - hd);
@@ -55,7 +55,7 @@ export function createCompass(cv) {
     list.sort((a, b) => PRI[a.kind] - PRI[b.kind] || a.d - b.d);
     const placed = [], texts = [];
     // pinned (next checkpoint, waypoint): highlighted badge 'CP3 · 240m', clamped to the edge with ◀/▶ when outside the view
-    pins.sort((a, b) => (b.kind === 'cp') - (a.kind === 'cp')); const y0 = sh + 11, spans = []; // the next checkpoint always wins its spot during a race
+    pins.sort((a, b) => (b.kind === 'cp') - (a.kind === 'cp')); const y0 = sh + 8, spans = []; // the next checkpoint always wins its spot during a race
     c.font = '900 10px system-ui';
     for (const m of pins) { // lay out first so the badge owns its whole width: other markers under it are hidden
       m.txt = (m.edge === 'L' ? '◀ ' : '') + (m.label ? m.label + ' · ' : '') + fmtD(m.d) + (m.edge === 'R' ? ' ▶' : ''); m.tw = c.measureText(m.txt).width + 16;
@@ -68,9 +68,9 @@ export function createCompass(cv) {
       spans.push([m.x - m.tw / 2 - 8, m.x + m.tw / 2 + 8]); }
     const under = x => spans.some(([a, b]) => x > a - 6 && x < b + 6);
     for (const m of list) { if (under(m.x) || placed.some(p => Math.abs(p.x - m.x) < 15)) { m.alpha = 0; continue; } placed.push(m);
-      c.globalAlpha = m.alpha; const y = sh + 11; icon(c, m.kind, m.x, y, 1, m.found);
+      c.globalAlpha = m.alpha; const y = sh + 8; c.save(); c.translate(m.x, y); c.scale(0.78, 0.78); icon(c, m.kind, 0, 0, 1, m.found); c.restore();
       if (texts.some(tx => Math.abs(tx - m.x) < 30) || spans.some(([a, b]) => m.x + 18 > a && m.x - 18 < b)) continue; texts.push(m.x); // distance labels never overlap: the nearer/higher-priority one wins
-      c.font = '800 9.5px system-ui'; c.lineWidth = 2.5; c.strokeStyle = '#111'; c.strokeText(fmtD(m.d), m.x, y + 13); c.fillStyle = '#fff'; c.fillText(fmtD(m.d), m.x, y + 13); }
+      c.font = '800 9px system-ui'; c.lineWidth = 2.5; c.strokeStyle = '#111'; c.strokeText(fmtD(m.d), m.x, y + 12); c.fillStyle = '#fff'; c.fillText(fmtD(m.d), m.x, y + 12); } // label bottom ≈ 40.5 < 44: never clipped
     c.globalAlpha = 1; c.font = '900 10px system-ui';
     for (const m of pins) { if (!m.alpha) continue; // drawn last = always on top; one row: [icon CP2 · 141m] fits the 44px strip
       const bw = m.tw + 8, bh = 16, bx = m.x - bw / 2, by = sh + 4;

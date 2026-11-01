@@ -57,7 +57,7 @@ export function openPowerPanel({ container, def, getState, onChange = () => {}, 
     ru(); sl.__ru = ru;
   }
   // graph
-  const PAD = { l: 50, r: 54, t: 18, b: 34 };
+  const PAD = { l: 50, r: 54, t: 26, b: 34 }; // top margin = legend row (Nm · peak · hp) above the plot, never on the curve
   const W = cv.width, H = cv.height, gx = r => PAD.l + (W - PAD.l - PAD.r) * r / (cfg.redline * 1.04), gy = (v, mx) => H - PAD.b - (H - PAD.t - PAD.b) * v / mx;
   function draw() {
     const t = PW.table(cfg), pk = PW.peakOf(t, cfg.redline), st = getState(), live = st && st.__power ? st.rpm : st && st.rpm;
@@ -80,10 +80,10 @@ export function openPowerPanel({ container, def, getState, onChange = () => {}, 
     // peak-power marker
     g.setLineDash([8, 6]); g.strokeStyle = '#1a7ad8'; g.lineWidth = 2; g.beginPath(); g.moveTo(gx(pk.rpm), PAD.t); g.lineTo(gx(pk.rpm), H - PAD.b); g.stroke(); g.setLineDash([]);
     g.fillStyle = '#1a7ad8'; g.beginPath(); g.arc(gx(pk.rpm), gy(pk.hp, mxP), 7, 0, 7); g.fill();
-    g.textAlign = gx(pk.rpm) > W - 170 ? 'right' : 'left'; g.font = 'bold 17px monospace'; g.fillText(`${fmt(pk.hp)} hp @ ${fmt(pk.rpm)}`, gx(pk.rpm) + (g.textAlign === 'right' ? -8 : 8), PAD.t + 14);
+    g.textAlign = gx(pk.rpm) > W - 170 ? 'right' : 'left'; g.font = 'bold 16px monospace'; g.fillText(`${fmt(pk.hp)} hp @ ${fmt(pk.rpm)}`, gx(pk.rpm) + (g.textAlign === 'right' ? -8 : 8), PAD.t - 8);
     // axis labels
-    g.textAlign = 'left'; g.fillStyle = '#d84a0a'; g.fillText('Nm', 4, PAD.t + 14); g.font = 'bold 14px monospace'; g.fillText(fmt(k), 2, gy(k, mxT) + 5);
-    g.textAlign = 'right'; g.fillStyle = '#1a7ad8'; g.fillText('hp', W - 4, PAD.t + 14);
+    g.textAlign = 'left'; g.fillStyle = '#d84a0a'; g.fillText('Nm', 4, PAD.t - 8); g.font = 'bold 14px monospace'; g.fillText(fmt(k), 2, gy(k, mxT) + 5);
+    g.textAlign = 'right'; g.fillStyle = '#1a7ad8'; g.fillText('hp', W - 4, PAD.t - 8);
     // nodes
     cfg.nodes.forEach((v, i) => { const r = cfg.redline * i / (PW.N - 1), x = gx(r), y = gy(PW.tq(t, r), mxT);
       g.beginPath(); g.arc(x, y, drag === i ? 15 : 12, 0, 7); g.fillStyle = drag === i ? '#ffd23c' : '#fff'; g.fill(); g.lineWidth = 4; g.strokeStyle = '#111'; g.stroke(); });
