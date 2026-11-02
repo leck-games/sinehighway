@@ -1,7 +1,7 @@
 // Road meshes: ribbons generated along the same math paths used by world.height() (road graph edges + race loops).
 // Asphalt highways get edge lines + dashed centre line, dirt trails/loops get wheel ruts; bridges get a deck slab, rails and pillars.
 import * as THREE from 'three';
-import { pathsNear, pathPoint, PP, HWY, LOOP, WATER, TUN_H, TUN_W } from './world.js';
+import { pathsNear, pathPoint, PP, HWY, LOOP, WATER, TUN_H, TUN_W, rimSpan } from './world.js';
 import { asphaltHD, dirtHD } from './roadhd.js';
 
 function canvasTex(draw) {
@@ -31,26 +31,29 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
   meshes[1].renderOrder = 1; meshes[0].renderOrder = 2; // trails first, asphalt last (wins ties at crossings)
   let lx = 1e9, lz = 1e9; const RAD = 650, STEP = 5;
   function build(px, pz) {
-    const buf = [{ p: [], uv: [], idx: [] }, { p: [], uv: [], idx: [] }, { p: [], n: [], idx: [] }, { p: [], c: [], idx: [] }];
+    const buf = [{ p: [], uv: [], idx: [], nr: [] }, { p: [], uv: [], idx: [], nr: [] }, { p: [], n: [], idx: [] }, { p: [], c: [], idx: [] }];
     const paths = pathsNear(px, pz, RAD);
     for (const e of paths) {
       const len = e.len, n = Math.ceil(len / STEP), b = buf[e.type === HWY ? 0 : 1], hw = e.hw;
-      let run = -1, vlen = 0, prev = null, tprev = null;
-      for (let i = 0; i <= n; i++) {
-        const t = i / n; pathPoint(e, t);
+      // RIM HIGHWAY (69 km): only its t-window around the player is walked (streamed with the rest of the roads, no upfront mesh)
+      const sp = e.rim ? rimSpan(px, pz, RAD) : null, i0 = sp ? Math.floor(sp[0] * n) : 0, i1 = sp ? Math.ceil(sp[1] * n) : n;
+      let run = -1, vlen = sp ? i0 * len / n : 0, prev = null, tprev = null;
+      for (let i = i0; i <= i1; i++) {
+        const t = sp ? ((i / n) % 1 + 1) % 1 : i / n; pathPoint(e, t);
         const dx = PP.x - px, dz = PP.z - pz, inside = dx * dx + dz * dz < RAD * RAD;
         if (!inside) { run = -1; prev = null; continue; }
-        const bank = e.loop ? 0 : Math.max(-0.07, Math.min(0.07, -PP.curv * 45));
+        const bank = PP.bank; // cross slope from world.js (RIM: NASCAR superelevation up to ~26 deg, edges: gentle crown)
         const nx = -PP.tz, nz = PP.tx, y = PP.y + (e.type === HWY ? 0.16 : 0.08); // normal (left)
         const base = b.p.length / 3;
         b.p.push(PP.x + nx * hw, y + hw * bank, PP.z + nz * hw, PP.x - nx * hw, y - hw * bank, PP.z - nz * hw);
         vlen += prev ? Math.hypot(PP.x - prev[0], PP.z - prev[1]) : 0; prev = [PP.x, PP.z];
         b.uv.push(0, vlen / 14, 1, vlen / 14);
+        const il = 1 / Math.hypot(1, bank); b.nr.push(-nx * bank * il, il, -nz * bank * il, -nx * bank * il, il, -nz * bank * il); // tilted normal on the banked RIM
         if (run >= 0) b.idx.push(base - 2, base, base - 1, base - 1, base, base + 1);
         run = base;
         if (PP.bridge) addBridge(buf[2], e, t, len / n, hw, nx, nz, PP.x, PP.y, PP.z, i);
         if ((PP.tun > 0) !== !!tprev && e.tn) { // tube enters/leaves between the previous and this station: put a ring exactly at the portal
-          const s1 = t * len, s0 = s1 - len / n, tt = e.tn.find(q => (q.s0 > s0 - 1e-6 && q.s0 <= s1) || (q.s1 >= s0 && q.s1 < s1 + 1e-6));
+          const s1 = (t || (sp ? 1 : 0)) * len, s0 = s1 - len / n, tt = e.tn.find(q => (q.s0 > s0 - 1e-6 && q.s0 <= s1) || (q.s1 >= s0 && q.s1 < s1 + 1e-6));
           if (tt) { const sP = tt.s0 > s0 - 1e-6 && tt.s0 <= s1 ? tt.s0 : tt.s1; pathPoint(e, sP / len); PP.tun = Math.max(PP.tun, 0.01); tprev = addTube(buf[3], e, hw, -PP.tz, PP.tx, tprev, vlen); pathPoint(e, t); if (!(PP.tun > 0)) tprev = null; }
         }
         if (PP.tun > 0) tprev = addTube(buf[3], e, hw, nx, nz, tprev, vlen); else tprev = null;
@@ -60,7 +63,7 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
     for (let k = 0; k < 2; k++) {
       const g = new THREE.BufferGeometry(), b = buf[k];
       g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
-      const nrm = new Float32Array(b.p.length); for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1; g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nr, 3));
       g.setIndex(b.idx); meshes[k].geometry.dispose(); meshes[k].geometry = g;
     }
     let g = new THREE.BufferGeometry(); const b = buf[2];

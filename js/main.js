@@ -343,13 +343,19 @@ function dashTunnels(c, e, pr, hw, col, dl) { // HILLS: tunnels drawn dashed (da
     for (const [w, st, dash] of [[hw + 1, '#2a2a30', []], [Math.max(1.5, hw * 0.6), col, [dl, dl]]]) { c.setLineDash(dash); c.lineWidth = w; c.strokeStyle = st; c.beginPath(); pts.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.stroke(); } }
   c.restore();
 }
+// path polyline for the maps: the 69 km RIM HIGHWAY is only walked over its window around (cx,cz) (whole ring when zoomed out)
+function pathLine(c, e, prj, n, cx, cz, r) {
+  const sp = e.rim ? W.rimSpan(cx, cz, r) : null, a = sp ? sp[0] : 0, b = sp ? sp[1] : 1; if (sp) n = Math.max(16, Math.ceil((b - a) * e.len / (b - a >= 1 ? 120 : 40)));
+  for (let i = 0; i <= n; i++) { W.pathPoint(e, (((a + (b - a) * i / n) % 1) + 1) % 1, false); const [x, y] = prj(W.PP.x, W.PP.z); i ? c.lineTo(x, y) : c.moveTo(x, y); }
+}
+const RIM_COL = '#ffc53a';
 function minimap(yaw) {
   const Wd = 130, sc = craft === 'plane' ? 0.08 / (1 + Math.min(3, pl.agl / 150)) : 0.08, px = veh.p.x, pz = veh.p.z; mc.clearRect(0, 0, Wd, Wd); mc.save(); mc.beginPath(); mc.arc(Wd / 2, Wd / 2, Wd / 2, 0, 7); mc.clip(); mc.translate(Wd / 2, Wd / 2); mc.rotate(yaw + Math.PI); mc.lineCap = 'round';
   if (Math.hypot(px - mapAt[0], pz - mapAt[1]) > 150) { mapAt = [px, pz]; mapPaths = W.pathsNear(px, pz, 1100); }
   for (const pass of [0, 1]) for (const e of mapPaths) {
-    const hw = e.type === W.HWY ? 7 : e.type === W.LOOP ? 5 : 3;
-    mc.strokeStyle = pass === 0 ? '#111' : e.type === W.HWY ? '#5a5c66' : e.type === W.LOOP ? '#e8a860' : '#c8955a'; mc.lineWidth = pass === 0 ? hw + 3 : hw; mc.beginPath();
-    const n = e.loop ? 64 : 16; for (let i = 0; i <= n; i++) { W.pathPoint(e, i / n, false); const x = (W.PP.x - px) * sc, y = (W.PP.z - pz) * sc; i ? mc.lineTo(x, y) : mc.moveTo(x, y); } mc.stroke();
+    const hw = e.rim ? 9 : e.type === W.HWY ? 7 : e.type === W.LOOP ? 5 : 3;
+    mc.strokeStyle = pass === 0 ? '#111' : e.rim ? RIM_COL : e.type === W.HWY ? '#5a5c66' : e.type === W.LOOP ? '#e8a860' : '#c8955a'; mc.lineWidth = pass === 0 ? hw + 3 : hw; mc.beginPath();
+    pathLine(mc, e, (x, z) => [(x - px) * sc, (z - pz) * sc], e.loop ? 64 : 16, px, pz, 1100); mc.stroke();
     if (pass) dashTunnels(mc, e, (x, z) => [(x - px) * sc, (z - pz) * sc], hw, mc.strokeStyle, 4);
   }
   AFX.draw(mc, (x, z) => [(x - px) * sc, (z - pz) * sc], sc);
@@ -526,6 +532,13 @@ function tickWp(yawCam) {
 let mapSpan = 5000, mapC = [0, 0], mapRow = 0, wmPaths = null; const MG = 150;
 const mapImg = document.createElement('canvas'); mapImg.width = mapImg.height = MG; const mic = mapImg.getContext('2d'), mid = mic.createImageData(MG, MG), mH = new Float32Array(MG * MG);
 const mcv = $('mapc'), mx2 = mcv.getContext('2d');
+function rimLabels(c, e, P) { // 'RIM HIGHWAY' along the ring: up to 8 spots, those inside the view, text follows the road
+  const k = Math.min(2, devicePixelRatio); c.save(); c.font = `900 ${10 * k}px "Arial Black",system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  const sp = W.rimSpan(mapC[0], mapC[1], 0), t0 = sp ? (sp[0] + sp[1]) / 2 + 0.004 : 0; // first label next to the map centre
+  for (let q = 0; q < 8; q++) { W.pathPoint(e, ((t0 + q / 8) % 1 + 1) % 1, false); const x = P.X(W.PP.x), y = P.Y(W.PP.z); if (x < 20 || y < 20 || x > P.Wp - 20 || y > P.Hp - 20) continue;
+    let a = Math.atan2(P.Y(W.PP.z + W.PP.tz) - y, P.X(W.PP.x + W.PP.tx) - x); if (a > Math.PI / 2) a -= Math.PI; if (a < -Math.PI / 2) a += Math.PI;
+    c.save(); c.translate(x, y); c.rotate(a); c.lineWidth = 4; c.strokeStyle = '#111'; c.strokeText('RIM HIGHWAY', 0, -12 * k); c.fillStyle = RIM_COL; c.fillText('RIM HIGHWAY', 0, -12 * k); c.restore(); }
+  c.restore(); }
 function openMap(o) { mapOpen = o; $('map').style.display = o ? 'block' : 'none'; if (o) { mapC = [veh.p.x, veh.p.z]; mapRow = 0; wmPaths = W.pathsNear(mapC[0], mapC[1], mapSpan * 0.6); listVistas(); } }
 function listVistas() { const l = $('mList'), vs = Object.values(vFound); l.innerHTML = vs.length ? '<b>TELEPORT</b>' : '<i>Find vistas (yellow beacons) to unlock teleports</i>';
   vs.forEach(v => { const b = document.createElement('button'); b.className = 'sb'; b.textContent = v.name; b.onclick = () => { openMap(false); window.__st.teleport(v.x + 12, v.z + 12); msg(v.name.toUpperCase()); }; l.appendChild(b); }); }
@@ -542,10 +555,11 @@ function drawMap() {
   const P = mapProject(), c = mx2; c.fillStyle = '#f7e6b5'; c.fillRect(0, 0, P.Wp, P.Hp); c.imageSmoothingEnabled = false;
   c.drawImage(mapImg, P.X(mapC[0] + mapSpan / 2), P.Y(mapC[1] + mapSpan / 2), mapSpan * P.S, mapSpan * P.S);
   c.lineCap = 'round'; c.lineJoin = 'round';
-  for (const pass of [0, 1]) for (const e of wmPaths) { const hw = (e.type === W.HWY ? 5.5 : e.type === W.LOOP ? 3.6 : 2.2) * Math.min(2, devicePixelRatio);
-    c.strokeStyle = pass === 0 ? '#111' : e.type === W.HWY ? '#e8e4d8' : e.type === W.LOOP ? '#ff8a1a' : '#c8955a'; c.lineWidth = pass === 0 ? hw + 3 : hw; c.beginPath();
-    const n = e.loop ? 48 : 12; for (let i = 0; i <= n; i++) { W.pathPoint(e, i / n, false); const x = P.X(W.PP.x), y = P.Y(W.PP.z); i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke();
-    if (pass) dashTunnels(c, e, (x, z) => [P.X(x), P.Y(z)], hw, c.strokeStyle, 3 * Math.min(2, devicePixelRatio)); }
+  for (const pass of [0, 1]) for (const e of wmPaths) { const hw = (e.rim ? 7.5 : e.type === W.HWY ? 5.5 : e.type === W.LOOP ? 3.6 : 2.2) * Math.min(2, devicePixelRatio);
+    c.strokeStyle = pass === 0 ? '#111' : e.rim ? RIM_COL : e.type === W.HWY ? '#e8e4d8' : e.type === W.LOOP ? '#ff8a1a' : '#c8955a'; c.lineWidth = pass === 0 ? hw + 3 : hw; c.beginPath();
+    pathLine(c, e, (x, z) => [P.X(x), P.Y(z)], e.loop ? 48 : 12, mapC[0], mapC[1], mapSpan * 0.75); c.stroke();
+    if (pass) dashTunnels(c, e, (x, z) => [P.X(x), P.Y(z)], hw, c.strokeStyle, 3 * Math.min(2, devicePixelRatio));
+    if (pass && e.rim) rimLabels(c, e, P); }
   const ci = Math.floor(mapC[0] / VC), cj = Math.floor(mapC[1] / VC), R = Math.ceil(mapSpan / VC / 2) + 1; c.font = `900 ${12 * Math.min(2, devicePixelRatio)}px "Arial Black",system-ui`; c.textAlign = 'center';
   for (let i = -R; i <= R; i++) for (let j = -R; j <= R; j++) { const v = vistaCell(ci + i, cj + j); if (!v) continue; const x = P.X(v.x), y = P.Y(v.z), f = vFound[v.key], r = 8 * Math.min(2, devicePixelRatio);
     c.fillStyle = f ? '#ffd23c' : '#fff8'; c.strokeStyle = '#111'; c.lineWidth = 3; c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y); c.lineTo(x, y + r); c.lineTo(x - r, y); c.closePath(); c.fill(); c.stroke();
@@ -910,6 +924,7 @@ function frame(now) {
   look.set(veh.p.x, veh.p.y + 1.3, veh.p.z); camera.lookAt(look);
   camera.fov += ((boosting ? 80 : 64 + Math.min(12, sp * 0.15)) - camera.fov) * Math.min(1, 3 * dt); camera.updateProjectionMatrix();
   camera.updateMatrixWorld();
+  if (window.__st.camHook) window.__st.camHook(camera); // tests / screenshots: custom camera (e.g. low shot across the RIM banking)
   }
   focus.x = veh.p.x; focus.y = veh.p.y; focus.z = veh.p.z;
   T.update(dt, { camera, focus, viewHeight: rt.height }); atmosphere(dt); // terrain weather/sky/fire/trees, then the game's fog/dust overlay
