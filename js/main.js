@@ -102,7 +102,7 @@ const Mx = new THREE.Matrix4(), Qt = new THREE.Quaternion(), Vt = new THREE.Vect
 
 // ---------- world adapter: the physics worldQuery contract on top of the terrain module ----------
 const SURF_POOL = Array.from({ length: 16 }, () => ({ name: 'grass', mu: 1, roll: 0, bs: 0, wet: 0, si: 2 })); let surfI = 0; const TS = {};
-let wxGrip = 1; // fog/dust overlay grip (rain/wet grip is already in T.surfaceAt)
+let gripTest = 1; /* tests: grip multiplier (__st.gripTest) */ let wxGrip = 1; // fog/dust overlay grip (rain/wet grip is already in T.surfaceAt)
 const hpMap = new Map(); // fractional tree HP (terrain stores whole segments 0..3)
 const nArr = [0, 0, 0];
 const world = {
@@ -282,6 +282,7 @@ function readInput(dt) {
   inp.hand = key.Space || touch.drf ? 1 : 0; inp.boost = key.ShiftLeft || key.ShiftRight || touch.bst ? 1 : 0;
   inp.pitch = Math.max(-1, Math.min(1, (key.KeyE ? 1 : 0) - (key.KeyQ ? 1 : 0) + touch.pitch));
   if (auto) { inp.gas = 1; inp.steer = 0.35 * Math.sin(simT * 0.5) + (auto === 'drift' && simT % 6 > 4.5 ? 0.9 : 0); inp.hand = auto === 'drift' && simT % 6 > 4.5 ? 1 : 0; inp.boost = auto === 'boost' ? 1 : 0; }
+  if (window.__st && window.__st.drive) window.__st.drive(inp, dt); // tests: in-frame autopilot (tools/test-rim.cjs)
 }
 
 // ---------- race: comic gates/props merged per loop track ----------
@@ -473,7 +474,7 @@ function atmosphere(dt) { // runs after T.update(): overlay fog/dust on the terr
   for (const k in wx) { wx[k] += ((k === tgt ? 1 : 0) - wx[k]) * Math.min(1, dt * 0.2); const P = WXP[k], w = wx[k];
     far *= 1 + (P.far - 1) * w; grip *= 1 + (P.grip - 1) * w; dark *= 1 + (P.dark - 1) * w;
     if (w > 0.001) { tmpC.copy(P.hz).multiply(L); H.lerp(tmpC, w * 0.85); Z.lerp(tmpC, w * 0.6); } }
-  L.multiplyScalar(dark); U.uFar.value *= far * QUAL[qName].farK; wxGrip = grip; veh.gripMul = 1;
+  L.multiplyScalar(dark); U.uFar.value *= far * QUAL[qName].farK; wxGrip = grip; veh.gripMul = gripTest;
   U.uHeadK.value = Math.max(U.uHeadK.value, (wx.fog + wx.dust) * 0.6);
   const pm = dustFx.material.uniforms; pm.uAmt.value = wx.dust * 0.9; dustFx.visible = pm.uAmt.value > 0.02; dustFx.position.copy(camera.position);
 }
@@ -947,7 +948,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 // release identity from js/version.js (title, menu tag, versions link)
 document.title = GAME_NAME; { const t = document.getElementById('verTag'); if (t) t.textContent = 'V' + GAME_VERSION; const v = document.getElementById('versionsLink'); if (v) v.href = VERSIONS_URL; }
-window.__st = { version: GAME_NAME, PWR, get vSub() { return vSub; }, openPower: () => { openMenu(true, 'vehicle'); vTab = 'car'; vSub = 'power'; vehRow(); }, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
+window.__st = { version: GAME_NAME, PWR, get gripTest() { return gripTest; }, set gripTest(v) { gripTest = v; }, get vSub() { return vSub; }, openPower: () => { openMenu(true, 'vehicle'); vTab = 'car'; vSub = 'power'; vehRow(); }, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
   get q() { return qName; }, setQ(q) { qName = q; applyQuality(); }, get x() { return veh.p.x; }, get z() { return veh.p.z; }, get y() { return veh.p.y; },
   place(x, z, yaw = 0) { spawn(x, z, yaw); }, /* car move that keeps the running race (tests) */ teleport(x, z, yaw = 0) { race = null; if (craft === 'plane') { planeAirStart(x, z, yaw); return; } spawn(x, z, yaw); updateWorld(true); updateCans(true); }, toBiome(name, yaw = 0) { const p = T.findBiome(name, veh.p.x, veh.p.z); if (p) this.teleport(p.x, p.z, yaw); return p; },
   setVehicle, useVehicle, setAttachments, get vName() { return vDef.id; }, openMap, openMenu, setWp, get wx() { return wx; }, setWx(m, snap = true) { wxMode = m; applyWx(); if (snap) T.snapWeather(); }, set tod(v) { tod = v; timeMode = 'Fixed'; applyTime(); },

@@ -12,7 +12,7 @@ const path = require('path');
     if (bd > e.hw + 12) return null;
     let t = best; for (let k = 0; k < 6; k++) { pathPoint(e, t, false); const px = PP.x, pz = PP.z, tx = PP.tx, tz = PP.tz; pathPoint(e, t + 1e-5, false); const sp = Math.hypot(PP.x - px, PP.z - pz) / 1e-5; t += ((x - px) * tx + (z - pz) * tz) / sp; t = e.loop ? t - Math.floor(t) : Math.max(0, Math.min(1, t)); }
     pathPoint(e, t); const s = -(x - PP.x) * PP.tz + (z - PP.z) * PP.tx, d = Math.hypot(x - PP.x, z - PP.z); if (d > e.hw - 0.05 || PP.bridge) return null;
-    const bank = e.loop ? 0 : Math.max(-0.07, Math.min(0.07, -PP.curv * 45)); return PP.y + s * bank;
+    return PP.y + s * PP.bank; // cross slope (edges: gentle crown, loops flat, RIM: NASCAR banking)
   };
   // render grids (ground.js): vertex height rule + the two triangles per quad
   const vH = (x, z, st) => { const o = sample(x, z); return o.rdd < st * 1.5 && o.rb > 0.6 ? Math.min(o.h, o.rb - (st > 8 ? 0.9 : 0.06)) : o.h; };
@@ -52,8 +52,26 @@ const path = require('path');
       hn++; const c = W.naturalHeight(PP.x, PP.z) - PP.y; if (c > 8) cut8++; if (c > maxCut) { maxCut = c; cutAt = [PP.x | 0, PP.z | 0, e.id]; } } }
   console.log(JSON.stringify({ hills: { stations: hn, cutOver8: cut8, maxCut: +maxCut.toFixed(2), cutAt, overTopGradeMaxOfCap: +otgMax.toFixed(3), overTopBad: otgBad, tunnels: tuns } }));
   const hillsOk = cut8 / hn < 0.001 && maxCut < 12 && otgBad === 0 && tuns > 5;
+  // RIM HIGHWAY: closed ring inside the world bounds (road + shoulder before the rim wall), >= 4 junctions that meet their edges, grade cap,
+  // cut limit, NASCAR bank range (flat at junctions / bridges / tunnels), surface = banked plane, smooth junction areas
+  const rim = (() => { const E = W.RIM; pathPoint(E, 0); const M = E.M, ds = E.ds, y0 = PP.y, b0 = PP.bank; pathPoint(E, 1); const seam = Math.max(Math.abs(PP.y - y0), Math.abs(PP.bank - b0) * 10);
+    let mxc = 0, mxg = 0, mxb = 0, cut8 = 0, mxcut = 0, st = 0, sn = 0, sBad = 0, sW = 0;
+    for (let i = 0; i < M; i++) { pathPoint(E, i / M); mxc = Math.max(mxc, Math.abs(PP.x) + Math.abs(PP.tz) * (E.hw + 8), Math.abs(PP.z) + Math.abs(PP.tx) * (E.hw + 8)); mxb = Math.max(mxb, Math.abs(Math.atan(PP.bank)) * 57.2958);
+      mxg = Math.max(mxg, Math.abs(E.prof[i + 1] - E.prof[i]) / ds); const s = i * ds;
+      if (PP.bridge || PP.tun > 0 || nearPortal(E, s, 60) || nearPortal(E, s + E.len, 60)) continue; st++; const c = W.naturalHeight(PP.x, PP.z) - PP.y; if (c > 8) cut8++; mxcut = Math.max(mxcut, c);
+      if (i % 3 === 0) { const P = { ...PP }; for (const f of [-0.9, -0.45, 0, 0.45, 0.9]) { const x = P.x - P.tz * E.hw * f, z = P.z + P.tx * E.hw * f, o = sample(x, z), y = P.y + E.hw * f * P.bank; sn++;
+        const d = Math.abs(o.h - y); if (d > 0.08 && !(o.deck > -1e8)) { sBad++; sW = Math.max(sW, d); } } } }
+    const J = W.rimJunctions(); let jBank = 0, jSlope = 0, jEnds = 0;
+    for (const j of J) { pathPoint(E, j.t); jBank = Math.max(jBank, Math.abs(PP.bank));
+      for (let dx = -60; dx <= 60; dx += 3) for (let dz = -60; dz <= 60; dz += 3) { const a = sample(j.x + dx, j.z + dz); if (a.road < 0.5) continue; const h0 = a.h; jSlope = Math.max(jSlope, Math.abs(sample(j.x + dx + 2, j.z + dz).h - h0) / 2, Math.abs(sample(j.x + dx, j.z + dz + 2).h - h0) / 2); }
+      for (const e of pathsNear(j.x, j.z, 30)) if (!e.rim && !e.loop) { pathPoint(e, 0); const a = e.a.rim ? Math.abs(PP.y - e.a.h) : 0; pathPoint(e, 1); const b = e.b.rim ? Math.abs(PP.y - e.b.h) : 0; if (Math.max(a, b) > 0.05) jEnds++; } }
+    const tn = (W.tunnelsOf(E) || []).length; let br = 0; for (let i = 0; i < M; i++) if (E.br[i] && !E.br[(i + M - 1) % M]) br++;
+    const r = { lenKm: +(E.len / 1000).toFixed(2), width: E.hw * 2, seam: +seam.toFixed(3), maxCoordWithShoulder: Math.round(mxc), maxGrade: +mxg.toFixed(3), cutOver8: cut8, maxCut: +mxcut.toFixed(2), bankMaxDeg: +mxb.toFixed(1),
+      junctions: J.length, junctionBank: +jBank.toFixed(4), junctionMaxSlope: +jSlope.toFixed(2), junctionEndSteps: jEnds, tunnels: tn, bridges: br, surfSamples: sn, surfBad: sBad, surfWorst: +sW.toFixed(2) };
+    console.log(JSON.stringify({ rim: r }));
+    return r.seam < 0.01 && mxc < W.WORLD && mxg <= 0.12 * 1.02 && cut8 / st < 0.002 && mxcut < 12 && mxb > 20 && mxb <= 33 && J.length >= 4 && jBank < 1e-3 && jSlope < 1 && jEnds === 0 && tn > 0 && br > 0 && sBad / sn < 0.01; })();
   const pct = (100 * (poke + float) / n);
   console.log(JSON.stringify({ roads: seen.size, samples: n, poke, float, worst: +worst.toFixed(2), at, junctionSteps: ends, loopSeams: seams, badPct: +pct.toFixed(3), gridSamples: gn, gridPoke4: G[4], gridPoke16: G[16], gridWorst4: +GW[4].toFixed(2), gridWorst16: +GW[16].toFixed(2), GA }));
-  const ok = hillsOk && pct < 0.5 && ends === 0 && seams === 0 && (G[4] + G[16]) / gn < 0.005;
+  const ok = hillsOk && rim && pct < 0.5 && ends === 0 && seams === 0 && (G[4] + G[16]) / gn < 0.005;
   console.log(ok ? 'ROADS OK' : 'ROADS FAIL'); process.exit(ok ? 0 : 1);
 })();
