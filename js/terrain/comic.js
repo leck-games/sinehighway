@@ -109,7 +109,7 @@ vec3 wetShade(vec3 c, vec3 N, vec3 w, float wet){
 // ---------------- terrain (ring-buffer grids): biome vertex colours + procedural comic detail + env ----------------
 export function gridTerrainMat({ far = false, uNear = null } = {}) {
   return new THREE.ShaderMaterial({ uniforms: far ? { ...U, uNear } : U, vertexColors: true, defines: far ? { FAR: 1 } : {},
-    vertexShader: `attribute vec4 sw; attribute float cw; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw;
+    vertexShader: `attribute vec4 sw; attribute float cw; attribute vec3 tn; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw; varying vec3 vTn;
       #ifdef FAR
         uniform vec3 uNear;
       #endif
@@ -117,10 +117,11 @@ export function gridTerrainMat({ far = false, uNear = null } = {}) {
         #ifdef FAR
           vec2 dd = abs(p.xz - uNear.xy); float m = max(dd.x, dd.y); p.y -= 8.0 * clamp((uNear.z - 10.0 - m) / 10.0, 0.0, 1.0);
         #endif
-        vW = p; vN = normal; vC = color; vS = sw; vCw = cw; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.); }`,
-    fragmentShader: COMIC + `uniform vec2 uCanR; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw;
+        vW = p; vN = normal; vC = color; vS = sw; vCw = cw; vTn = tn; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.); }`,
+    fragmentShader: COMIC + `uniform vec2 uCanR; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw; varying vec3 vTn;
       void main(){
         vec3 N = normalize(vN); float x = vW.x, z = vW.z, h = vW.y;
+        if (vTn.x > 0.02) { float tf = vTn.y / vTn.x; if (h > tf - 0.4 && h < tf + vTn.z / vTn.x) discard; } // HILLS: portal hole (slanted grid faces across the tunnel mouth)
         vec3 c = vC;
         float gW = clamp(1. - vS.x - vS.y - vS.z - vS.w, 0., 1.);
         float pat = sin(x*0.09 + sin(z*0.07)*2.) * sin(z*0.08 + sin(x*0.05)*2.);
@@ -232,6 +233,16 @@ export function roadMat(map, { offset = -2, col = 0x9a9aa2 } = {}) {
         #endif
         c = wetShade(c, N, vW, wetAt(vW.xz));
         gl_FragColor = vec4(comic(c, N, vW, hk), ncode(N)); }` });
+}
+// HILLS: tunnel tube / portals: merged low-poly geometry, vertex colours (a > 0.5 = emissive light strip), comic-shaded, both sides
+export function tunnelMat() {
+  return new THREE.ShaderMaterial({ uniforms: U, side: THREE.DoubleSide,
+    vertexShader: `attribute vec4 tc; varying vec3 vW; varying vec3 vN; varying vec4 vC;
+      void main(){ vC = tc; vW = position; vN = normal; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.); }`,
+    fragmentShader: COMIC + `varying vec3 vW; varying vec3 vN; varying vec4 vC;
+      void main(){ vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
+        vec3 c = vC.a > 0.5 ? fogMix(vC.rgb, vW, 1.0) : max(comic(vC.rgb, N, vW, 0.2), fogMix(vC.rgb * 0.5, vW, 1.0));
+        gl_FragColor = vec4(c, ncode(N)); }` });
 }
 // sky: smooth dithered gradient dome (horizon haze band -> zenith), warm sun disc + glow, optional drifting cirrus,
 // comic moon/stars at night, overcast darkening from local cloud cover (uRain). Writes alpha 1.0 = "sky" for the post pass.

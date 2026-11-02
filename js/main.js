@@ -106,13 +106,13 @@ let wxGrip = 1; // fog/dust overlay grip (rain/wet grip is already in T.surfaceA
 const hpMap = new Map(); // fractional tree HP (terrain stores whole segments 0..3)
 const nArr = [0, 0, 0];
 const world = {
-  heightAt: (x, z) => T.heightAt(x, z),
+  heightAt: (x, z) => T.groundAt(x, z), // HILLS: tunnel floor while the vehicle is inside a tube (reference set before each step)
   normalAt(x, z, out = { x: 0, y: 1, z: 0 }) { T.normalAt(x, z, nArr); out.x = nArr[0]; out.y = nArr[1]; out.z = nArr[2]; return out; },
   surfaceAt(x, z) { T.surfaceAt(x, z, TS); const o = SURF_POOL[surfI = (surfI + 1) & 15]; o.name = TS.surfaceName; o.si = TS.surface; o.mu = TS.grip * wxGrip; o.roll = TS.roll; o.bs = TS.bs; o.wet = TS.wet; return o; },
   waterLevel: WATER,
   queryTrees(x, z, r, out) {
-    const a = T.queryTrees(x, z, r), res = out || []; if (out) out.length = 0;
-    for (const t of a) { const h = hpMap.has(t.id) ? hpMap.get(t.id) : t.hp; if (h <= 0) continue; res.push({ id: t.id, x: t.pos.x, z: t.pos.z, r: t.radius, hp: h }); }
+    const a = T.queryTrees(x, z, r), res = out || []; if (out) out.length = 0; const tin = T.tunnelAt(x, z), ty = tin ? tin.floor + tin.H : 1e9;
+    for (const t of a) { if (t.pos.y > ty) continue; /* trees on the hill above a tunnel */ const h = hpMap.has(t.id) ? hpMap.get(t.id) : t.hp; if (h <= 0) continue; res.push({ id: t.id, x: t.pos.x, z: t.pos.z, r: t.radius, hp: h }); }
     return res;
   },
   damageTree(id, removed, cause) {
@@ -134,7 +134,7 @@ function cellObj(ci, cj) {
   o = null;
   const h = hash2(ci, cj, 9), x = (ci + hash2(ci, cj, 7)) * SC, z = (cj + hash2(ci, cj, 8)) * SC;
   sample(x, z, SO);
-  if (SO.h > WATER + 1.2 && SO.road < 0.05 && SO.rd > 2.5) {
+  if (SO.h > WATER + 1.2 && SO.road < 0.05 && SO.rd > 2.5 && !(SO.tun > -1e8)) {
     const s = 0.7 + hash2(ci, cj, 6) * 0.8, v = hash2(ci, cj, 5), d = SO.dom, R = W.REG;
     const thr = d === R.ALPINE ? 0.9 : d === R.HILLS ? 0.95 : d === R.PLAINS ? 0.985 : d === R.DUNES ? 2 : 0.88;
     if (h > thr) o = { m: v < 0.6 ? 0 : 1, x, z, y: SO.h, s, h, v, red: d === R.CANYON || d === R.DUNES, key };
@@ -158,13 +158,18 @@ function updateScenery(px, pz) {
   }
   for (const m of rockM) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; }
 }
+function tunnelWalls(s) { // HILLS: tube side walls (the terrain is a hill above, so only the lateral walls need a collider)
+  const ti = T.tunnelAt(s.p.x, s.p.z); if (!ti) return; const lim = ti.hw + 1.25, over = Math.abs(ti.s) - lim; if (over <= 0) return;
+  const sg = Math.sign(ti.s), nx = ti.nx * sg, nz = ti.nz * sg; s.p.x -= nx * over; s.p.z -= nz * over;
+  const vn = s.v.x * nx + s.v.z * nz; if (vn > 0) { s.v.x -= 1.3 * vn * nx; s.v.z -= 1.3 * vn * nz; s.v.x *= 0.985; s.v.z *= 0.985; if (vn > 6) { bus.emit('crash', { value: vn, cause: 'wall' }); PH.addDamage(s, vn * 0.3, 'wall'); } }
+}
 function collideRocks(s) { // circle push-out + bounce on the physics state (after each 120 Hz step)
   const p = s.p, v = s.v, rr = (s.P.dims ? Math.max(s.P.dims[0], s.P.dims[2]) * 0.4 : 1.4), melt = melts(rig.attach);
   const fl = Math.hypot(s.fwd.x, s.fwd.z) || 1, fx = s.fwd.x / fl, fz = s.fwd.z / fl, ext = melt ? 1.2 + Math.max(0, v.x * fx + v.z * fz) * STEP : 0;
   for (let i = 0; i < colliders.length; i += 4) {
     if (colliders[i + 2] < 0) continue;
     const dx = p.x - colliders[i], dz = p.z - colliders[i + 1], r = colliders[i + 2] + rr + ext, d2 = dx * dx + dz * dz; if (d2 > r * r || d2 < 1e-6) continue;
-    if (p.y - T.heightAt(colliders[i], colliders[i + 1]) > colliders[i + 2] * 1.4 + 1) continue;
+    if (Math.abs(p.y - T.heightAt(colliders[i], colliders[i + 1])) > colliders[i + 2] * 1.4 + 1) continue; // above it, or under it in a tunnel
     if (melt) { const d = Math.sqrt(d2); if (-(dx * fx + dz * fz) / d > 0.35) { // rock ahead of the cutter: gone at once — no push, no speed loss, no damage, no FX
       bus.emit('rock:melted', { key: colliders[i + 3], x: colliders[i], z: colliders[i + 1], r: colliders[i + 2], speed: Math.hypot(v.x, v.z) * 3.6 }); meltRock(colliders[i + 3]); colliders[i + 2] = -1; continue; }
       if (d > r - ext) continue; } // the extra cutter reach only applies to the front
@@ -182,7 +187,7 @@ const planeMat = objMat({ hatch: 0.18 }); // planes: light hatching so a backlit
 const carRoot = new THREE.Group(); scene.add(carRoot);
 const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), decalMat(0x203040, true)); scene.add(shadow);
 let vis = null, flameOrig = null, veh = null, vDef = null;
-vshadow = createVehicleShadow(renderer, scene, (x, z) => T.heightAt(x, z));
+vshadow = createVehicleShadow(renderer, scene, (x, z) => T.groundAt(x, z));
 // procedural airfields (W.AF): runway strips + hangars/tower/windsocks; trees under buildings are cleared (again after REGROW)
 const afClear = (x, z, r) => { for (const t of T.queryTrees(x, z, r)) T.removeTree(t.id); };
 AFX = createAirfields({ scene, AF: W.AF, heightAt: (x, z) => T.heightAt(x, z), mat: objMat({ hatch: 0.8 }), clearTrees: afClear });
@@ -210,7 +215,7 @@ function useVehicle(id, attach) {
 }
 function setVehicle(id) { if (id === vDef?.id) return; const x = veh.p.x, z = veh.p.z, yaw = PH.yawOf(veh); useVehicle(id); spawn(x, z, yaw); msg(vDef.name); }
 function setAttachments(ids) { rig.setAttachments(ids); comicify(rig.root); store.set('srp_attach_' + vDef.id, rig.attach); return rig.attach; }
-function spawn(x, z, yaw = 0) { for (let k = 0; k < 200 && height(x, z) < WATER + 2; k++) { x += 37; z += 23; } PH.spawn(veh, world, x, z, yaw); lastGear = veh.gear; }
+function spawn(x, z, yaw = 0) { for (let k = 0; k < 200 && height(x, z) < WATER + 2; k++) { x += 37; z += 23; } T.setRef(-1e9); PH.spawn(veh, world, x, z, yaw); T.setRef(veh.p.y); lastGear = veh.gear; }
 const fwdSpeed = () => veh.v.x * veh.fwd.x + veh.v.y * veh.fwd.y + veh.v.z * veh.fwd.z;
 { let id = QS.get('car') || store.get('srp_vehicle', null) || localStorage.getItem('sinerally_veh') || DEFAULT_VEHICLE; if (!listVehicles().some(v => v.id === id)) id = DEFAULT_VEHICLE; useVehicle(id); rig.setMode(hMode); }
 { const t = nearTrack(0, 0), p = trackPoint(t, 0), q = trackPoint(t, 0.02); spawn(p[0], p[1], Math.atan2(q[0] - p[0], q[1] - p[1])); }
@@ -286,10 +291,10 @@ function cpPos(t, i) { const th = i / NCP * Math.PI * 2, p = trackPoint(t, th), 
 function buildGates(t) {
   curTrack = t; cps = Array.from({ length: NCP }, (_, i) => cpPos(t, i));
   if (propMesh) { scene.remove(propMesh); propMesh.geometry.dispose(); }
-  const g = trackProps(cps, T.heightAt); propMesh = new THREE.Mesh(g, propMat); scene.add(propMesh);
+  const g = trackProps(cps, T.roadGroundAt); propMesh = new THREE.Mesh(g, propMat); scene.add(propMesh);
 }
 // race starts: every loop track near the player gets a pulsing ring + light pillar (drive into the ring = start, as before)
-const RR = createRaceRings({ scene, heightAt: (x, z) => T.heightAt(x, z) }); let starts = [], startsAt = [1e9, 1e9];
+const RR = createRaceRings({ scene, heightAt: (x, z) => T.roadGroundAt(x, z) }); let starts = [], startsAt = [1e9, 1e9];
 function raceStarts(force, ax, az) { const px = ax ?? veh.p.x, pz = az ?? veh.p.z; if (!force && Math.hypot(px - startsAt[0], pz - startsAt[1]) < 150) return; startsAt = [px, pz];
   const seen = new Set(); starts = [];
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const t = nearTrack(px + i * 3000, pz + j * 3000); if (seen.has(t.id)) continue; seen.add(t.id);
@@ -331,6 +336,13 @@ function raceUpdate(dt) {
 }
 // ---------- minimap (comic: inked roads, loop, start gate) ----------
 const mc = $('mini').getContext('2d'); let mapPaths = [], mapAt = [1e9, 1e9];
+function dashTunnels(c, e, pr, hw, col, dl) { // HILLS: tunnels drawn dashed (dark tube, road-coloured dashes)
+  const tn = W.tunnelsOf(e); if (!tn || !tn.length) return; c.save(); c.lineCap = 'butt';
+  for (const t of tn) { const a = Math.max(0, t.s0), b = Math.min(e.len, t.s1), n = Math.max(2, Math.ceil((b - a) / 25)), pts = [];
+    for (let i = 0; i <= n; i++) { W.pathPoint(e, (a + (b - a) * i / n) / e.len, false); pts.push(pr(W.PP.x, W.PP.z)); }
+    for (const [w, st, dash] of [[hw + 1, '#2a2a30', []], [Math.max(1.5, hw * 0.6), col, [dl, dl]]]) { c.setLineDash(dash); c.lineWidth = w; c.strokeStyle = st; c.beginPath(); pts.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.stroke(); } }
+  c.restore();
+}
 function minimap(yaw) {
   const Wd = 130, sc = craft === 'plane' ? 0.08 / (1 + Math.min(3, pl.agl / 150)) : 0.08, px = veh.p.x, pz = veh.p.z; mc.clearRect(0, 0, Wd, Wd); mc.save(); mc.beginPath(); mc.arc(Wd / 2, Wd / 2, Wd / 2, 0, 7); mc.clip(); mc.translate(Wd / 2, Wd / 2); mc.rotate(yaw + Math.PI); mc.lineCap = 'round';
   if (Math.hypot(px - mapAt[0], pz - mapAt[1]) > 150) { mapAt = [px, pz]; mapPaths = W.pathsNear(px, pz, 1100); }
@@ -338,6 +350,7 @@ function minimap(yaw) {
     const hw = e.type === W.HWY ? 7 : e.type === W.LOOP ? 5 : 3;
     mc.strokeStyle = pass === 0 ? '#111' : e.type === W.HWY ? '#5a5c66' : e.type === W.LOOP ? '#e8a860' : '#c8955a'; mc.lineWidth = pass === 0 ? hw + 3 : hw; mc.beginPath();
     const n = e.loop ? 64 : 16; for (let i = 0; i <= n; i++) { W.pathPoint(e, i / n, false); const x = (W.PP.x - px) * sc, y = (W.PP.z - pz) * sc; i ? mc.lineTo(x, y) : mc.moveTo(x, y); } mc.stroke();
+    if (pass) dashTunnels(mc, e, (x, z) => [(x - px) * sc, (z - pz) * sc], hw, mc.strokeStyle, 4);
   }
   AFX.draw(mc, (x, z) => [(x - px) * sc, (z - pz) * sc], sc);
   const s = cps[0] || { x: px, z: pz }; /* no track yet (first frames after load) */ let sx = (s.x - px) * sc, sz = (s.z - pz) * sc; const d = Math.hypot(sx, sz); if (d > 55) { sx *= 55 / d; sz *= 55 / d; }
@@ -531,7 +544,8 @@ function drawMap() {
   c.lineCap = 'round'; c.lineJoin = 'round';
   for (const pass of [0, 1]) for (const e of wmPaths) { const hw = (e.type === W.HWY ? 5.5 : e.type === W.LOOP ? 3.6 : 2.2) * Math.min(2, devicePixelRatio);
     c.strokeStyle = pass === 0 ? '#111' : e.type === W.HWY ? '#e8e4d8' : e.type === W.LOOP ? '#ff8a1a' : '#c8955a'; c.lineWidth = pass === 0 ? hw + 3 : hw; c.beginPath();
-    const n = e.loop ? 48 : 12; for (let i = 0; i <= n; i++) { W.pathPoint(e, i / n, false); const x = P.X(W.PP.x), y = P.Y(W.PP.z); i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke(); }
+    const n = e.loop ? 48 : 12; for (let i = 0; i <= n; i++) { W.pathPoint(e, i / n, false); const x = P.X(W.PP.x), y = P.Y(W.PP.z); i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke();
+    if (pass) dashTunnels(c, e, (x, z) => [P.X(x), P.Y(z)], hw, c.strokeStyle, 3 * Math.min(2, devicePixelRatio)); }
   const ci = Math.floor(mapC[0] / VC), cj = Math.floor(mapC[1] / VC), R = Math.ceil(mapSpan / VC / 2) + 1; c.font = `900 ${12 * Math.min(2, devicePixelRatio)}px "Arial Black",system-ui`; c.textAlign = 'center';
   for (let i = -R; i <= R; i++) for (let j = -R; j <= R; j++) { const v = vistaCell(ci + i, cj + j); if (!v) continue; const x = P.X(v.x), y = P.Y(v.z), f = vFound[v.key], r = 8 * Math.min(2, devicePixelRatio);
     c.fillStyle = f ? '#ffd23c' : '#fff8'; c.strokeStyle = '#111'; c.lineWidth = 3; c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y); c.lineTo(x, y + r); c.lineTo(x - r, y); c.closePath(); c.fill(); c.stroke();
@@ -676,7 +690,7 @@ $('tSnd').onclick = () => { if (!audio.running) { audio.unlock(); audio.setMuted
 let craft = 'car', pl = null, plDef = null, plVis = null, plAuto = null, lastTO = -9, pitchInv = localStorage.getItem('sinerally_pinv') === '1';
 const pin = { pitch: 0, roll: 0, yaw: 0, thr: 0, brake: 0, boost: 0 }; let thrLever = 0, pRollSm = 0, pPitchSm = 0, pYawSm = 0;
 const plTrees = [], V_UP = new THREE.Vector3(0, 1, 0), camDir3 = new THREE.Vector3(0, 0, 1), camOff = new THREE.Vector3(0, 4, -14), camUpS = new THREE.Vector3(0, 1, 0), pTmp = new THREE.Vector3();
-const penv = { groundAt: (x, z) => T.heightAt(x, z), waterLevel: WATER, arcade: true, solids: AFX.solids,
+const penv = { groundAt: (x, z) => T.groundAt(x, z), waterLevel: WATER, arcade: true, solids: AFX.solids,
   trees: (x, z, r) => world.queryTrees(x, z, r, plTrees), treeTop: t => { const tr = T.getTree(t.id); return tr ? tr.height : 8; },
   hitTree: t => { const y = T.heightAt(t.x, t.z); world.damageTree(t.id, 3, 'plane'); popText('SMASH!', t.x, y + 5, t.z, '#ffd23c'); burst(t.x, y, t.z, 14, [0.35, 0.62, 0.25], 5); },
   emit: (t, d) => bus.emit(t, d) };
@@ -747,7 +761,7 @@ function planeVisuals(dt, sp) {
   else if (pl.agl < 7 && sp > 5 && Math.random() < (pl.onGround ? 0.55 : 0.3)) { const si = surfIdx(world.surfaceAt(pl.p.x, pl.p.z)); // wheel dust / prop wash on loose ground
     if (si !== 0 || pl.onGround && sp > 25 && Math.random() < 0.2) puff(pl.p.x - pl.fwd.x * 2.5 + (Math.random() - .5) * 3, T.heightAt(pl.p.x, pl.p.z) + 0.3, pl.p.z - pl.fwd.z * 2.5 + (Math.random() - .5) * 3, -pl.v.x * 0.12 + (Math.random() - .5) * 3, 0.6 + Math.random(), -pl.v.z * 0.12 + (Math.random() - .5) * 3, 0.9 + Math.random() * 0.8, 0.6, PUFFC[si] || PUFFC[2]); }
   // shadow: dotted blob at LOW/MED (fades with height), projected silhouette at HIGH/ULTRA
-  const gy = T.heightAt(pl.p.x, pl.p.z), agl = pl.p.y - gy; shadow.position.set(pl.p.x, Math.max(gy, WATER) + 0.1, pl.p.z); shadow.rotation.y = Math.atan2(pl.fwd.x, pl.fwd.z);
+  const gy = T.groundAt(pl.p.x, pl.p.z), agl = pl.p.y - gy; shadow.position.set(pl.p.x, Math.max(gy, WATER) + 0.1, pl.p.z); shadow.rotation.y = Math.atan2(pl.fwd.x, pl.fwd.z);
   const sh = Math.max(0.35, 1 - agl * 0.012); shadow.scale.set(sh * shadow.userData.w, 1, sh * shadow.userData.l); shadow.visible = agl < 70;
   if (vshadow.size && vshadow.update(g, pl.p, Math.max(plDef.span, plDef.dims[2]) * 0.58 + 0.5, 140)) shadow.visible = false;
 }
@@ -759,7 +773,7 @@ function planeCam(dt, sp) { // flight chase camera: trails the flight path in 3-
   const back = L * 1.0 + span * 0.35 + 3 + Math.min(8, sp * 0.04) + (pl.crashed ? 14 : 0), hh = (L + span * 0.35 + 3) * 0.36 + 1 + (pl.crashed ? 7 : 0); // close + ~20° above: thin wings seen edge-on would turn into pure ink lines
   RV.copy(pl.up).lerp(V_UP, 0.65).normalize();
   pTmp.copy(camDir3).multiplyScalar(-back).addScaledVector(RV, hh); camOff.lerp(pTmp, Math.min(1, 7 * dt));
-  camPos.copy(pl.p).add(camOff); camPos.y = Math.max(camPos.y, T.heightAt(camPos.x, camPos.z) + 1.5, WATER + 1); camera.position.copy(camPos);
+  camPos.copy(pl.p).add(camOff); camPos.y = Math.max(camPos.y, T.groundAt(camPos.x, camPos.z) + 1.5, WATER + 1); camera.position.copy(camPos);
   if (shake > 0) { camera.position.x += (Math.random() - .5) * shake * 0.8; camera.position.y += (Math.random() - .5) * shake * 0.8; shake = Math.max(0, shake - dt * 2.5); }
   camUpS.lerp(pTmp.copy(V_UP).lerp(pl.up, hMode === 'arcade' ? 0.3 : 0.45), Math.min(1, 4 * dt)).normalize(); camera.up.copy(camUpS);
   look.copy(pl.p).addScaledVector(pl.fwd, L * 0.7).addScaledVector(V_UP, 1.2); camera.lookAt(look);
@@ -847,7 +861,7 @@ function frame(now) {
   if (editor.benching && !PLN) { inp.gas = inp.brake = inp.boost = 0; inp.steer = 0; inp.hand = 1; } // sound editor open: car input paused (audio keeps running)
   if (PLN && (menuOpen || editor.benching)) acc = 0; // planes can't park in mid-air: the menu / sound editor pause the flight
   acc += dt; let steps = 0; const tp = performance.now(); penv.arcade = hMode === 'arcade';
-  while (acc >= STEP && steps < 12) { simT += STEP; if (PLN) stepPlane(pl, pin, STEP, penv); else { const g0 = inp.gas; inp.gas = PWR.throttle(veh, STEP, g0); rig.step(inp, STEP); inp.gas = g0; pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); AFX.collide(veh.p, veh.v); } acc -= STEP; steps++; }
+  while (acc >= STEP && steps < 12) { simT += STEP; T.setRef(PLN ? pl.p.y : veh.p.y); if (PLN) stepPlane(pl, pin, STEP, penv); else { const g0 = inp.gas; inp.gas = PWR.throttle(veh, STEP, g0); rig.step(inp, STEP); inp.gas = g0; pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); tunnelWalls(veh); AFX.collide(veh.p, veh.v); } acc -= STEP; steps++; }
   if (PLN && pl.crashed && pl.crashT > 2.6) planeToRunway(pickField(plDef, pl.p.x, pl.p.z));
   AFX.update(dt);
   if (steps === 12) acc = 0;
@@ -874,7 +888,7 @@ function frame(now) {
   comicify(rig.root);
   updatePuffs(dt);
   vis.flame.visible = boosting; vis.flame.scale.set(1, 1, 0.7 + Math.random() * 0.6);
-  { const gy = T.heightAt(veh.p.x, veh.p.z); shadow.position.set(veh.p.x, gy + 0.1, veh.p.z); shadow.rotation.y = PH.yawOf(veh); const sh = Math.max(0.3, 1 - (veh.p.y - 1.1 - gy) * 0.08); shadow.scale.set(sh * shadow.userData.w, 1, sh * shadow.userData.l); shadow.visible = veh.up.y > 0.3; const d = veh.P.dims || [2, 1.5, 4.4]; if (vshadow.size && vshadow.update(vis.group, veh.p, Math.max(d[0], d[2]) * 0.62 + 0.4)) shadow.visible = false; }
+  { const gy = T.groundAt(veh.p.x, veh.p.z); shadow.position.set(veh.p.x, gy + 0.1, veh.p.z); shadow.rotation.y = PH.yawOf(veh); const sh = Math.max(0.3, 1 - (veh.p.y - 1.1 - gy) * 0.08); shadow.scale.set(sh * shadow.userData.w, 1, sh * shadow.userData.l); shadow.visible = veh.up.y > 0.3; const d = veh.P.dims || [2, 1.5, 4.4]; if (vshadow.size && vshadow.update(vis.group, veh.p, Math.max(d[0], d[2]) * 0.62 + 0.4)) shadow.visible = false; }
   // chase camera: follows velocity direction when moving fast, heading otherwise; FOV kick on boost
   const dims = veh.P.dims || [2, 1.5, 4.4];
   tv.set(veh.fwd.x, 0, veh.fwd.z); if (fwdSpeed() < -3) tv.negate(); tv.normalize();
@@ -889,7 +903,8 @@ function frame(now) {
       if (tt > -1 && tt < back + cr + 1.5 && lat < cr + 1.5) low = 1; } } // crowns around the boom: drop the camera below them (crowns start ~2.6 m up)
   camBack += (back - camBack) * Math.min(1, (back < camBack ? 10 : 2) * dt); back = camBack; camLow += (low - camLow) * Math.min(1, 3 * dt);
   const cx = veh.p.x - camDir.x * back, cz = veh.p.z - camDir.z * back;
-  const ch = 2.2 + dims[1] * 0.67, tgt = tv.set(cx, Math.max(veh.p.y + ch + (1.1 - ch) * camLow, T.heightAt(cx, cz) + 2 - 0.6 * camLow), cz);
+  const ch = 2.2 + dims[1] * 0.67, tin = T.tunnelAt(veh.p.x, veh.p.z), tgt = tin ? tv.set(cx, Math.min(veh.p.y + ch, tin.floor + tin.H - 1.2), cz) // in a tunnel: under the roof
+    : tv.set(cx, Math.max(veh.p.y + ch + (1.1 - ch) * camLow, T.groundAt(cx, cz) + 2 - 0.6 * camLow), cz);
   camPos.lerp(tgt, Math.min(1, 6 * dt)); camera.position.copy(camPos);
   if (shake > 0) { camera.position.x += (Math.random() - .5) * shake * 0.8; camera.position.y += (Math.random() - .5) * shake * 0.8; shake = Math.max(0, shake - dt * 2.5); }
   look.set(veh.p.x, veh.p.y + 1.3, veh.p.z); camera.lookAt(look);
@@ -924,4 +939,4 @@ window.__st = { version: GAME_NAME, PWR, get vSub() { return vSub; }, openPower:
   get dynS() { return dynS; }, get craft() { return craft; }, setCraft, get plane() { return pl; }, get planeDef() { return plDef; }, PLANES, planeToRunway, airStart: planeAirStart, pickField, get planeCtl() { return plAuto; }, set planeCtl(v) { plAuto = v; }, get pin() { return pin; }, get throttle() { return thrLever; }, set throttle(v) { thrLever = v; }, get afx() { return AFX; }, get rinfo() { const r = renderer.info.render; return { tris: r.triangles, calls: r.calls, pr: renderer.getPixelRatio(), grass: grassMesh ? grassMesh.geometry.instanceCount : 0, det: U.uDet.value, sh: vshadow ? vshadow.size : 0, far: camera.far, qLoad, road: T.roadStats }; }, get QUAL() { return QUAL; }, vshadow, get camera() { return camera; }, get labels() { return labTrees; }, get handling() { return hMode; }, setHandling, get ui() { return uiMode; }, setUi, cycleUi, get uied() { return uied; }, rockGone, get rocks() { return colliders; }, collideRocks,
   raceRings: RR, get starts() { return starts.map(s => ({ id: s.id, x: s.x, z: s.z })); }, get compass() { return compass.state; }, setCompass, get compassOn() { return compassOn; },
   get race() { return race; }, get cps() { return cps; }, get curTrack() { return curTrack; }, NCP, nearTrack, trackPoint, raceStarts,
-  gateFrames(t) { const c = Array.from({ length: NCP }, (_, i) => cpPos(t, i)), g = trackProps(c, T.heightAt), r = g.userData.gates; g.dispose(); return r; } };
+  gateFrames(t) { const c = Array.from({ length: NCP }, (_, i) => cpPos(t, i)), g = trackProps(c, T.roadGroundAt), r = g.userData.gates; g.dispose(); return r; } };

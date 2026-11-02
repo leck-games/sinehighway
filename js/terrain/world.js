@@ -162,7 +162,7 @@ function edgeAt(i, j, dir) {
   edges.set(key, e); return e;
 }
 // path point: t in [0,1]; fills PP {x,z,tx,tz,y,curv,bridge}
-const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0 };
+const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0, tun: 0 }; // tun: metres inside a tunnel (0 = open road)
 function pathPoint(e, t, wantY = true) {
   if (wantY && !e.pinned) buildProfile(e); // lazy build first: it reuses PP
   if (e.loop) {
@@ -175,7 +175,7 @@ function pathPoint(e, t, wantY = true) {
     const l = Math.sqrt(1 + o1 * o1); PP.tx = (e.dx + e.nx * o1) / l; PP.tz = (e.dz + e.nz * o1) / l; PP.curv = o2 / (l * l * l);
   }
   if (wantY) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.y = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; PP.bridge = e.br[u < 0.5 ? i : i + 1];
-    if (e.pins) PP.y += pinAt(e, t); }
+    if (e.pins) PP.y += pinAt(e, t); PP.tun = e.tn ? tunAt(e, clamp(t, 0, 1) * e.len) : 0; }
   return PP;
 }
 function profY(e, t) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; return e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; }
@@ -207,6 +207,7 @@ function baseProfile(e) {
   // could not reach the node within the grade limit) -> spread the residual linearly so every edge meets its nodes exactly
   if (e.loop) { const err = p[M] - p[0]; for (let i = 0; i <= M; i++) p[i] -= err * i / M; } // closed seam (the grade passes could leave a step at t=0/1)
   if (!e.loop) { const e0 = p[0] - e.a.h, e1 = p[M] - e.b.h; for (let i = 0; i <= M; i++) p[i] -= e0 * (1 - i / M) + e1 * (i / M); }
+  hills(e, p, wet, M, ds);
   // bridges over short wet runs (rivers); long wet runs become causeways
   const br = new Uint8Array(M + 1);
   if (!e.loop) for (let i = 0; i <= M;) {
@@ -216,6 +217,72 @@ function baseProfile(e) {
   }
   e.prof = p; e.br = br; e.ds = ds; e.len = len;
 }
+// ---------------- HILLS (local): no canyon cuts. The smoothed/grade-clamped profile used to slice up to ~40 m deep through ridges,
+// so big hills read as walled roads. Cuts are capped at CUT_MAX and fills at FILL_MAX (vs. lightly smoothed natural ground);
+// a deeper cut run is either re-graded OVER THE TOP (raise-only envelope, grade <= 12% hwy / 15% trail+loop) or, when it is long
+// and deep (or going over would need a big fill), becomes a TUNNEL: the road keeps its level profile, the hill stays intact above it.
+// Deterministic per seed (pure function of the edge). Tunnels: e.tn = [{s0, s1}] in metres along the edge (portal to portal).
+export const CUT_MAX = 6.5, FILL_MAX = 12, OT_GRADE = { [HWY]: 0.12, [TRAIL]: 0.15, [LOOP]: 0.15 }, TUN_LEN = 60, TUN_CUT = 18, TUN_FILL = 10, TUN_END = 45, TUN_MIN = 50, TUN_GAP = 70, TUN_W = 2.6; // TUN_W: tube half width beyond the road edge (walls)
+export const TUN_H = { [HWY]: 7.5, [TRAIL]: 6, [LOOP]: 7.5 }; // tunnel clear height above the road
+function envelope(v, M, loop, g, up) { // v[i] = max_j(v[j] - g|i-j|) (up) / min_j(v[j] + g|i-j|) (down), circular on loops
+  const n = loop ? M : M + 1, R = loop ? 2 : 1;
+  for (let k = 1; k < n * R; k++) { const i = k % n, j = (k - 1) % n; v[i] = up ? mx(v[i], v[j] - g) : mn(v[i], v[j] + g); }
+  for (let k = n * R - 2; k >= 0; k--) { const i = k % n, j = (k + 1) % n; v[i] = up ? mx(v[i], v[j] - g) : mn(v[i], v[j] + g); }
+  if (loop) v[M] = v[0];
+}
+function hills(e, p, wet, M, ds) {
+  const loop = !!e.loop, n = loop ? M : M + 1, at = i => loop ? pmod(i, M) : i;
+  // natural ground per station: highest (cuts) / lowest (fills) of 7 samples across the station's 30 m slice -> narrow ridges between stations count
+  const ns = new Float32Array(M + 1), nl = new Float32Array(M + 1), q = new Float32Array(M + 1);
+  for (let i = 0; i <= M; i++) { let hi = -1e9, lo = 1e9; for (let k = -3; k <= 3; k++) { const t = (i + k / 7) / M; if (t < 0 || t > 1) continue; pathPoint(e, loop ? t - fl(t) : t, false); const h = natural(PP.x, PP.z); hi = mx(hi, h); lo = mn(lo, h); } ns[i] = hi; nl[i] = lo; }
+  const wn = new Uint8Array(M + 1); for (let i = 0; i <= M; i++) if (wet[i]) for (let k = -2; k <= 2; k++) { const j = at(i + k); if (j >= 0 && j <= M) wn[j] = 1; }
+  const G = OT_GRADE[e.type] * ds, pin = new Uint8Array(M + 1), cone = new Float32Array(M + 1);
+  if (!loop) pin[0] = pin[M] = 1; // junction nodes keep their exact height
+  const reach = (up) => { // cone of heights reachable from the pinned stations at grade G (up: lowest allowed top / down: highest allowed bottom)
+    for (let i = 0; i <= M; i++) cone[i] = pin[i] ? p[i] : up ? 1e9 : -1e9; envelope(cone, M, loop, G, !up); return cone; };
+  // 1. fill cap (embankments): lower-only envelope from natural + FILL_MAX; bridges / wet stations keep their height
+  const ub = new Float32Array(M + 1); for (let i = 0; i <= M; i++) ub[i] = wn[i] ? 1e9 : nl[i] + FILL_MAX;
+  envelope(ub, M, loop, G, false); reach(false); for (let i = 0; i <= M; i++) if (!pin[i]) p[i] = mn(p[i], mx(ub[i], cone[i]));
+  // 2. cut runs deeper than CUT_MAX
+  const cut = i => !wet[i] && ns[i] - p[i] > CUT_MAX; let k0 = 0;
+  if (loop) { while (k0 < M && cut(k0)) k0++; if (k0 >= M) return; }
+  const runs = []; let r = null;
+  for (let k = 0; k <= n; k++) { const i = at(k0 + k); if (k < n && cut(i)) { if (!r) r = { a: k0 + k, b: k0 + k, mc: 0 }; r.b = k0 + k; r.mc = mx(r.mc, ns[i] - p[i]); } else if (r) { runs.push(r); r = null; } }
+  const lb = new Float32Array(M + 1), tn = [];
+  for (const r of runs) {
+    // over-the-top candidate: how high would the re-graded road float over the ground around this run?
+    lb.fill(-1e9); for (let k = r.a; k <= r.b; k++) lb[at(k)] = ns[at(k)] - CUT_MAX + 0.5; envelope(lb, M, loop, G, true);
+    let fo = 0; for (let i = 0; i <= M; i++) if (lb[i] > p[i] && !wn[i]) fo = mx(fo, lb[i] - nl[i]);
+    if (!loop) { const ke = Math.ceil(TUN_END / ds); r.ta = mx(r.a, ke); r.tb = mn(r.b, M - ke); } else { r.ta = r.a; r.tb = r.b; } // portals stay clear of junctions
+    const L = (r.tb - r.ta + 1) * ds;
+    r.tun = r.tb >= r.ta && ((L >= TUN_LEN && r.mc > TUN_CUT) || fo > TUN_FILL);
+    if (r.tun) { const ra = r.a, rb = r.b; r.a = r.ta; r.b = r.tb; // portals where the cut crosses CUT_MAX (interpolated between stations)
+      const cA = ns[at(r.a - 1)] - p[at(r.a - 1)], cB = ns[at(r.a)] - p[at(r.a)], cC = ns[at(r.b)] - p[at(r.b)], cD = ns[at(r.b + 1)] - p[at(r.b + 1)];
+      const s0 = (r.a - 1 + clamp((CUT_MAX - cA) / mx(1e-3, cB - cA), 0, 1)) * ds, s1 = (r.b + clamp((cC - CUT_MAX) / mx(1e-3, cC - cD), 0, 1)) * ds;
+      const ex = mx(0, TUN_MIN - (s1 - s0)) / 2; tn.push({ s0: s0 - ex, s1: s1 + ex }); for (let k = r.a - 1 - Math.ceil(ex / ds); k <= r.b + 1 + Math.ceil(ex / ds); k++) pin[at(k)] = 1; // tunnel floor keeps its level profile
+      r.a = ra; r.b = rb; r.tA = r.ta - 1 - Math.ceil(ex / ds); r.tB = r.tb + 1 + Math.ceil(ex / ds);
+    }
+  }
+  const dry = (a, b) => { for (let j = fl(a / ds); j <= Math.ceil(b / ds); j++) if (wet[at(j)]) return false; return true; };
+  for (let k = 1; k < tn.length; k++) if (tn[k].s0 - tn[k - 1].s1 < TUN_GAP && dry(tn[k - 1].s1, tn[k].s0)) { // short daylight gaps between bores -> one tunnel
+    for (let j = fl(tn[k - 1].s1 / ds); j <= Math.ceil(tn[k].s0 / ds); j++) pin[at(j)] = 1; tn[k - 1].s1 = tn[k].s1; tn.splice(k--, 1); }
+  for (let k = 0; k < tn.length; k++) { const t = tn[k], mid = (t.s0 + t.s1) / 2; // never overlap a bridge (wet station): bridges stay bridges
+    for (let j = Math.ceil(t.s0 / ds) - 1; j <= fl(t.s1 / ds) + 1; j++) if (wet[at(j - 1)] || wet[at(j)] || wet[at(j + 1)]) { if (j * ds < mid) t.s0 = mx(t.s0, (j + 0.6) * ds); else t.s1 = mn(t.s1, (j - 0.6) * ds); }
+    if (t.s1 - t.s0 < 20) tn.splice(k--, 1); }
+  // 3. over the top: raise-only envelope from (natural - CUT_MAX) over the remaining cut stations, limited to what the pinned stations
+  // (junction nodes, tunnel floors) can reach at the grade cap; crests rounded once, then a final exact pass
+  const p0 = Float32Array.from(p);
+  for (let pass = 0; pass < 2; pass++) {
+    lb.fill(-1e9); let any = false; for (let i = 0; i <= M; i++) if (!pin[i] && !wet[i] && ns[i] - p[i] > CUT_MAX - 0.3) { lb[i] = ns[i] - CUT_MAX + (pass ? 0.1 : 0.8); any = true; }
+    if (!any) break;
+    envelope(lb, M, loop, G, true); reach(true); for (let i = 0; i <= M; i++) if (!pin[i]) p[i] = mx(p[i], mn(lb[i], cone[i]));
+    if (!pass) for (let r = 0; r < 2; r++) { for (let i = 0; i <= M; i++) q[i] = pin[i] || (!loop && (i === 0 || i === M)) ? p[i] : 0.25 * p[at(i - 1)] + 0.5 * p[i] + 0.25 * p[at(i + 1)]; p.set(q); if (loop) p[M] = p[0]; }
+  }
+  e.otg = 0; for (let i = 0; i < M; i++) if (p[i] - p0[i] > 0.05 && p[i + 1] - p0[i + 1] > 0.05) e.otg = mx(e.otg, A(p[i + 1] - p[i]) / ds); // over-top grade (tests)
+  if (tn.length) { const L = loop ? M * ds : 0; e.tn = loop ? tn.flatMap(t => [t, { s0: t.s0 - L, s1: t.s1 - L }, { s0: t.s0 + L, s1: t.s1 + L }]) : tn; }
+}
+// tunnel at arc length s: 0 = open road, else distance (m) inside from the nearest portal
+function tunAt(e, s) { const T = e.tn; if (!T) return 0; for (const t of T) if (s > t.s0 && s < t.s1) return mn(s - t.s0, t.s1 - s); return 0; }
 // ROADS OVER TERRAIN (local): level crossings. Where two roads overlap, the lower-priority one (trail < loop < highway, then id) gets a smooth
 // additive bump (plateau over the overlap, ramps at <= ~7% extra grade) so its centre-line meets the other road's surface: no road is buried
 // in the other's embankment or left floating over its cutting. Priority is a strict order, so lazy profile builds never recurse in a cycle.
@@ -254,11 +321,11 @@ function crossPins(e) {
     let tgt = null, bd = 1e9;
     for (const r of pathsNear(b.x, b.z, 60)) { if (r === e || !above(r, e) || !pathDist(r, b.x, b.z)) continue; if (PD.d < bd) { bd = PD.d; tgt = { r, t: PD.t, s: PD.s }; } }
     if (!tgt) continue;
-    pathPoint(tgt.r, tgt.t); if (PP.bridge) continue;
+    pathPoint(tgt.r, tgt.t); if (PP.bridge || PP.tun) continue; // HILLS: no level crossing with a road inside its tunnel (it passes under)
     const bank = tgt.r.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07), ho = PP.y + clamp(tgt.s, -tgt.r.hw, tgt.r.hw) * bank;
     const sn = A(b.tx * PP.tz - b.tz * PP.tx), cs = A(b.tx * PP.tx + b.tz * PP.tz);
     const f = b.t * e.M, i = mn(e.M - 1, fl(f)), u = f - i, he = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u;
-    if (e.br[u < 0.5 ? i : i + 1]) continue;
+    if (e.br[u < 0.5 ? i : i + 1] || (e.tn && tunAt(e, b.t * len))) continue;
     const d = ho - he; if (A(d) < 0.03) continue;
     out.push({ t: b.t, d, P: mn(45, (tgt.r.hw + e.hw * cs + 2) / mx(0.3, sn)), R: mx(30, 1.5 * A(d) / 0.08) });
   }
@@ -329,7 +396,7 @@ function footRefine(e, x, z) {
   const rx = x - PP.x, rz = z - PP.z; PD.t = t; PD.s = -rx * PP.tz + rz * PP.tx; PD.d = Math.hypot(rx, rz);
 }
 // ---------------- full sample: natural terrain + road beds/banking + bridge decks ----------------
-export const OUT = { h: 0, hn: 0, deck: -1e9, road: 0, rtype: 0, dom: 0, riv: 1e9, rd: 1e9, bg: 0, bs: 0, bf: 0, rb: 0, rdd: 1e9 };
+export const OUT = { h: 0, hn: 0, deck: -1e9, road: 0, rtype: 0, dom: 0, riv: 1e9, rd: 1e9, bg: 0, bs: 0, bf: 0, rb: 0, rdd: 1e9, tun: -1e9, ttype: 0, ts: 0, thw: 0, tdep: 0, tnx: 0, tnz: 0, tH: 0 };
 // ---- biome layer (terrain module): pure sine fields over the region selector -> dry grassland / savanna / forest weights ----
 export const BIOME = { GRASSLAND: 0, SAVANNA: 1, FOREST: 2, DESERT: 3, CANYON: 4, ALPINE: 5 };
 export const BIOME_NAMES = ['grassland', 'savanna', 'forest', 'desert', 'canyon', 'alpine'];
@@ -351,7 +418,7 @@ export function biomeOf(o) { // dominant biome of a sample
 }
 const CORE = 1.5;
 export function sample(x, z, o = OUT) {
-  const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn, rdd = 1e9, rb = 0;
+  const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn, rdd = 1e9, rb = 0, tun = -1e9, tsd = 1e9, cover = -1e9;
   const list = cellEdges(fl(x / RG), fl(z / RG));
   const tk = nearTrack(x, z);
   for (let n = -1; n < list.length; n++) {
@@ -361,6 +428,12 @@ export function sample(x, z, o = OUT) {
     pathPoint(e, PD.t);
     const bank = e.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07);
     const hb = PP.y + clamp(PD.s, -e.hw, e.hw) * bank;
+    if (PP.tun > 0) { // HILLS: tunnel bore -> no bed carve / road flag; the hill is kept (and topped up) over the tube
+      const F = e.hw + TUN_W, cov = PP.y + TUN_H[e.type] + 1.8;
+      if (d < F && (tun < -1e8 || d < tsd)) { tun = hb; tsd = d; o.ttype = e.type; o.ts = PD.s; o.thw = e.hw; o.tdep = PP.tun; o.tnx = -PP.tz; o.tnz = PP.tx; o.tH = TUN_H[e.type]; }
+      if (cov > hn && d < F + 12) cover = mx(cover, d < F + 1.5 ? cov : hn + (cov - hn) * sst(F + 12, F + 1.5, d));
+      continue;
+    }
     const span = PP.bridge && hn < hb; // ROADS OVER TERRAIN (local): a bridge station only floats over ground that is lower than its deck; at abutments/banks the bed is carved like any road
     if (!span && d - e.hw < rdd) { rdd = d - e.hw; rb = PP.y - A(e.hw * bank); } // lowest edge of the nearest bed (render grids keep under it)
     const core = e.hw + CORE, blend = mn(60, 8 + 1.3 * A(hn - hb));
@@ -372,13 +445,22 @@ export function sample(x, z, o = OUT) {
     if (w > bestW || (w === 1 && bestW === 1 && d < e.hw + 0.5 && hb > bestH)) { bestW = w; bestH = hb; }
   }
   if (bestW > 0) h = hn + (bestH - hn) * bestW;
+  if (cover > h) h = cover;
   if (AF.length) { AO.h = h; AO.road = rw; AO.rtype = rtype; AO.rd = rdmin; if (airMod(x, z, hn)) { h = AO.h; rw = AO.road; rtype = AO.rtype; rdmin = AO.rd; } }
   const edge = mx(A(x), A(z)) - WORLD; if (edge > 0) h += edge * 0.6; // world rim
-  o.h = h; o.hn = hn; o.deck = deck; o.road = rw; o.rtype = rtype; o.dom = NAT.dom; o.riv = NAT.riv; o.rd = rdmin; o.rb = rb; o.rdd = rdd;
+  o.h = h; o.hn = hn; o.deck = deck; o.road = rw; o.rtype = rtype; o.dom = NAT.dom; o.riv = NAT.riv; o.rd = rdmin; o.rb = rb; o.rdd = rdd; o.tun = tun;
   return o;
 }
 export function height(x, z) { return sample(x, z).h; }
-export function ground(x, z) { sample(x, z); return OUT.deck > OUT.h ? OUT.deck : OUT.h; } // physics: includes bridge decks
+export function ground(x, z) { sample(x, z); return OUT.deck > OUT.h ? OUT.deck : OUT.h; } // includes bridge decks (scenery: the hill top over tunnels)
+// HILLS: tunnels make the ground two-layered. The game sets the reference height (vehicle / camera y) once per frame; a query inside a
+// tunnel footprint below the tube roof gets the tunnel floor, anything else the terrain (= ground()).
+let REFY = 1e9; export function setRef(y) { REFY = y; }
+export const inTunnel = o => o.tun > -1e8 && REFY < o.tun + o.tH + 1.5;
+export function groundRef(x, z) { sample(x, z); return inTunnel(OUT) ? OUT.tun : OUT.deck > OUT.h ? OUT.deck : OUT.h; }
+export function heightRef(x, z) { sample(x, z); return inTunnel(OUT) ? OUT.tun : OUT.h; }
+export function roadGround(x, z) { sample(x, z); return OUT.tun > -1e8 ? OUT.tun : OUT.deck > OUT.h ? OUT.deck : OUT.h; } // race props / pickups: on the road, in tunnels too
+export function tunnelsOf(e) { if (!e.prof) buildProfile(e); return e.tn ? e.tn.filter(t => t.s1 > 0 && t.s0 < e.len) : null; }
 export function trackW(x, z) { // 1 on race loop, smooth falloff (kept for scenery/compat)
   const t = nearTrack(x, z), hw = t.path.hw; pathDist(t.path, x, z); return PD.d < hw + 1 ? 1 : PD.d > hw + 14 ? 0 : sst(hw + 14, hw + 1, PD.d);
 }

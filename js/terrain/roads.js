@@ -1,7 +1,7 @@
 // Road meshes: ribbons generated along the same math paths used by world.height() (road graph edges + race loops).
 // Asphalt highways get edge lines + dashed centre line, dirt trails/loops get wheel ruts; bridges get a deck slab, rails and pillars.
 import * as THREE from 'three';
-import { pathsNear, pathPoint, PP, HWY, LOOP, WATER } from './world.js';
+import { pathsNear, pathPoint, PP, HWY, LOOP, WATER, TUN_H, TUN_W } from './world.js';
 import { asphaltHD, dirtHD } from './roadhd.js';
 
 function canvasTex(draw) {
@@ -25,17 +25,17 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
     g.fillStyle = 'rgba(120,150,70,0.35)'; g.fillRect(29, 0, 6, 256); // centre grass strip
   });
   // asphalt sits higher and gets a stronger depth offset than dirt, so trails never draw over the highway at crossings
-  const matA = mk('asphalt', asphaltTex), matD = mk('dirt', dirtTex), matB = mk('bridge', null);
-  const meshes = [new THREE.Mesh(new THREE.BufferGeometry(), matA), new THREE.Mesh(new THREE.BufferGeometry(), matD), new THREE.Mesh(new THREE.BufferGeometry(), matB)];
+  const matA = mk('asphalt', asphaltTex), matD = mk('dirt', dirtTex), matB = mk('bridge', null), matT = mk('tunnel', null);
+  const meshes = [new THREE.Mesh(new THREE.BufferGeometry(), matA), new THREE.Mesh(new THREE.BufferGeometry(), matD), new THREE.Mesh(new THREE.BufferGeometry(), matB), new THREE.Mesh(new THREE.BufferGeometry(), matT)];
   meshes.forEach(m => { m.frustumCulled = false; scene.add(m); });
   meshes[1].renderOrder = 1; meshes[0].renderOrder = 2; // trails first, asphalt last (wins ties at crossings)
   let lx = 1e9, lz = 1e9; const RAD = 650, STEP = 5;
   function build(px, pz) {
-    const buf = [{ p: [], uv: [], idx: [] }, { p: [], uv: [], idx: [] }, { p: [], n: [], idx: [] }];
+    const buf = [{ p: [], uv: [], idx: [] }, { p: [], uv: [], idx: [] }, { p: [], n: [], idx: [] }, { p: [], c: [], idx: [] }];
     const paths = pathsNear(px, pz, RAD);
     for (const e of paths) {
       const len = e.len, n = Math.ceil(len / STEP), b = buf[e.type === HWY ? 0 : 1], hw = e.hw;
-      let run = -1, vlen = 0, prev = null;
+      let run = -1, vlen = 0, prev = null, tprev = null;
       for (let i = 0; i <= n; i++) {
         const t = i / n; pathPoint(e, t);
         const dx = PP.x - px, dz = PP.z - pz, inside = dx * dx + dz * dz < RAD * RAD;
@@ -49,7 +49,13 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
         if (run >= 0) b.idx.push(base - 2, base, base - 1, base - 1, base, base + 1);
         run = base;
         if (PP.bridge) addBridge(buf[2], e, t, len / n, hw, nx, nz, PP.x, PP.y, PP.z, i);
+        if ((PP.tun > 0) !== !!tprev && e.tn) { // tube enters/leaves between the previous and this station: put a ring exactly at the portal
+          const s1 = t * len, s0 = s1 - len / n, tt = e.tn.find(q => (q.s0 > s0 - 1e-6 && q.s0 <= s1) || (q.s1 >= s0 && q.s1 < s1 + 1e-6));
+          if (tt) { const sP = tt.s0 > s0 - 1e-6 && tt.s0 <= s1 ? tt.s0 : tt.s1; pathPoint(e, sP / len); PP.tun = Math.max(PP.tun, 0.01); tprev = addTube(buf[3], e, hw, -PP.tz, PP.tx, tprev, vlen); pathPoint(e, t); if (!(PP.tun > 0)) tprev = null; }
+        }
+        if (PP.tun > 0) tprev = addTube(buf[3], e, hw, nx, nz, tprev, vlen); else tprev = null;
       }
+      if (e.tn) for (const tt of e.tn) for (const sP of [tt.s0, tt.s1]) if (sP >= 0 && sP <= len) { pathPoint(e, sP / len); if ((PP.x - px) ** 2 + (PP.z - pz) ** 2 < RAD * RAD) addPortal(buf[3], e, sP); }
     }
     for (let k = 0; k < 2; k++) {
       const g = new THREE.BufferGeometry(), b = buf[k];
@@ -60,6 +66,9 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
     let g = new THREE.BufferGeometry(); const b = buf[2];
     g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setIndex(b.idx); g = g.toNonIndexed(); g.computeVertexNormals(); // flat-shaded boxes for crisp ink edges
     meshes[2].geometry.dispose(); meshes[2].geometry = g;
+    g = new THREE.BufferGeometry(); const bt = buf[3];
+    g.setAttribute('position', new THREE.Float32BufferAttribute(bt.p, 3)); g.setAttribute('tc', new THREE.Float32BufferAttribute(bt.c, 4)); g.setIndex(bt.idx); g = g.toNonIndexed(); g.computeVertexNormals();
+    meshes[3].geometry.dispose(); meshes[3].geometry = g;
   }
   // bridge pieces: slab under the deck, side rails, a pillar every ~25 m
   function box(b, cx, cy, cz, ax, az, hx, hy, hz) { // oriented box: (ax,az) = forward dir
@@ -68,6 +77,32 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
     const F = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
     for (const f of F) b.idx.push(base + f[0], base + f[1], base + f[2], base + f[0], base + f[2], base + f[3]);
   }
+  // HILLS: tunnel tube (one merged mesh): chamfered box section, darker towards the middle, a yellow light strip every ~20 m,
+  // concrete portal headwalls (hide the terrain seam at the mouth). Returns the ring for the next station.
+  const TUBE = (W, H) => [[W, -1.2], [W, H - 1.6], [W - 1.6, H], [1.6 - W, H], [-W, H - 1.6], [-W, -1.2]];
+  function quad(b, a, c, d, f, col, em) { const base = b.p.length / 3; b.p.push(...a, ...c, ...d, ...f); for (let k = 0; k < 4; k++) b.c.push(col[0], col[1], col[2], em); b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3); }
+  function addTube(b, e, hw, nx, nz, prev, vlen) {
+    const H = TUN_H[e.type], W = hw + TUN_W - 0.2, y = PP.y, dk = 1 - 0.45 * Math.min(1, PP.tun / 30);
+    const ring = TUBE(W, H).map(([l, v]) => [PP.x + nx * l, y + v, PP.z + nz * l]);
+    const col = [0.56 * dk, 0.54 * dk, 0.5 * dk], roof = [0.36 * dk, 0.35 * dk, 0.34 * dk];
+    if (prev) {
+      for (let k = 0; k < 5; k++) quad(b, prev.ring[k], ring[k], ring[k + 1], prev.ring[k + 1], k === 2 ? roof : col, 0);
+      if (fl(vlen / 20) !== fl(prev.vlen / 20)) { // light strip under the roof
+        const fx = PP.tx * 1.6, fz = PP.tz * 1.6, w = 0.35, yy = y + H - 0.08;
+        quad(b, [PP.x + nx * w - fx, yy, PP.z + nz * w - fz], [PP.x + nx * w + fx, yy, PP.z + nz * w + fz], [PP.x - nx * w + fx, yy, PP.z - nz * w + fz], [PP.x - nx * w - fx, yy, PP.z - nz * w - fz], [1, 0.86, 0.45], 1);
+      }
+    }
+    return { ring, vlen };
+  }
+  function addPortal(b, e, sP) { // concrete headwall + hazard stripe at a tunnel mouth
+    pathPoint(e, sP / e.len); const nx = -PP.tz, nz = PP.tx, H = TUN_H[e.type], W = e.hw + TUN_W - 0.2, y = PP.y;
+      const box2 = (l0, l1, v0, v1, col, th = 0.6) => { const P = (l, v, f) => [PP.x + nx * l + PP.tx * f, y + v, PP.z + nz * l + PP.tz * f];
+        quad(b, P(l0, v0, -th), P(l1, v0, -th), P(l1, v1, -th), P(l0, v1, -th), col, 0); quad(b, P(l0, v0, th), P(l0, v1, th), P(l1, v1, th), P(l1, v0, th), col, 0);
+        quad(b, P(l0, v1, -th), P(l1, v1, -th), P(l1, v1, th), P(l0, v1, th), col, 0); quad(b, P(l0, v0, -th), P(l0, v1, -th), P(l0, v1, th), P(l0, v0, th), col, 0); quad(b, P(l1, v0, -th), P(l1, v1, -th), P(l1, v1, th), P(l1, v0, th), col, 0); };
+      const cc = [0.78, 0.74, 0.66], st = [0.95, 0.72, 0.15];
+      box2(W, W + 4.5, -3, H + 2.2, cc); box2(-W - 4.5, -W, -3, H + 2.2, cc); box2(-W, W, H, H + 2.2, cc); box2(-W - 0.02, W + 0.02, H - 0.05, H + 0.7, st, 0.68);
+      }
+  const fl = Math.floor;
   function addBridge(b, e, t, ds, hw, nx, nz, x, y, z, i) {
     const ax = nz, az = -nx; // forward = tangent
     box(b, x, y - 0.6, z, PP.tx, PP.tz, hw + 0.6, 0.55, ds * 0.5 + 0.05);

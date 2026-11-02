@@ -16,9 +16,15 @@ const path = require('path');
   };
   // render grids (ground.js): vertex height rule + the two triangles per quad
   const vH = (x, z, st) => { const o = sample(x, z); return o.rdd < st * 1.5 && o.rb > 0.6 ? Math.min(o.h, o.rb - (st > 8 ? 0.9 : 0.06)) : o.h; };
+  const vT = (x, z) => { const o = sample(x, z); return o.tun > -1e8 ? [1, o.tun, o.tH] : [0, 0, 0]; }; // tunnel attribute (portal hole: comic.js discards)
   const gridH = (x, z, st) => { const i = Math.floor(x / st), j = Math.floor(z / st), u = x / st - i, v = z / st - j;
     const a = vH(i * st, j * st, st), b = vH(i * st, (j + 1) * st, st), c = vH((i + 1) * st, (j + 1) * st, st), d = vH((i + 1) * st, j * st, st);
-    return u + v <= 1 ? a + (d - a) * u + (b - a) * v : c + (b - c) * (1 - u) + (d - c) * (1 - v); };
+    const h = u + v <= 1 ? a + (d - a) * u + (b - a) * v : c + (b - c) * (1 - u) + (d - c) * (1 - v);
+    const A = vT(i * st, j * st), B = vT(i * st, (j + 1) * st), Cc = vT((i + 1) * st, (j + 1) * st), D = vT((i + 1) * st, j * st);
+    const T = [0, 1, 2].map(k => u + v <= 1 ? A[k] + (D[k] - A[k]) * u + (B[k] - A[k]) * v : Cc[k] + (B[k] - Cc[k]) * (1 - u) + (D[k] - Cc[k]) * (1 - v));
+    if (T[0] > 0.02 && h > T[1] / T[0] - 0.4 && h < T[1] / T[0] + T[2] / T[0]) return -1e9; // discarded fragment
+    return h; };
+  const nearPortal = (e, s, r) => e.tn && e.tn.some(t => Math.abs(s - t.s0) < r || Math.abs(s - t.s1) < r);
   const G = { 4: 0, 16: 0 }, GW = { 4: 0, 16: 0 }, GA = {}; let gn = 0;
   const seen = new Set(); let n = 0, poke = 0, float = 0, worst = 0, at = null, ends = 0, seams = 0;
   for (let cx = -R; cx <= R; cx += 1200) for (let cz = -R; cz <= R; cz += 1200) for (const e of pathsNear(cx, cz, 700)) {
@@ -26,7 +32,7 @@ const path = require('path');
     if (e.loop) { pathPoint(e, 0); const a = PP.y; pathPoint(e, 1); if (Math.abs(a - PP.y) > 0.05) seams++; }
     else { pathPoint(e, 0); const a = Math.abs(PP.y - e.a.h); pathPoint(e, 1); const b = Math.abs(PP.y - e.b.h); if (!PP.bridge && Math.max(a, b) > 0.05 && Math.min(e.a.h, e.b.h) > W.WATER + 4.6) ends++; }
     const m = Math.ceil(e.len / 6);
-    for (let i = 0; i <= m; i++) { pathPoint(e, i / m); if (PP.bridge) continue; const x0 = PP.x, z0 = PP.z, nx = -PP.tz, nz = PP.tx;
+    for (let i = 0; i <= m; i++) { pathPoint(e, i / m); if (PP.bridge || PP.tun > 0 || nearPortal(e, i / m * e.len, e.hw)) continue; /* tunnels run under the (kept) hill; the mouth is hidden by the headwall */ const x0 = PP.x, z0 = PP.z, nx = -PP.tz, nz = PP.tx;
       for (const f of [-0.97, -0.5, 0, 0.5, 0.97]) {
         const x = x0 + nx * e.hw * f, z = z0 + nz * e.hw * f; if (Math.max(Math.abs(x), Math.abs(z)) > 9000) continue;
         const my = surf(e, x, z); if (my == null) continue; n++;

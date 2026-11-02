@@ -19,7 +19,9 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
   const off = (type, f) => { const a = listeners.get(type); if (a) { const i = a.indexOf(f); if (i >= 0) a.splice(i, 1); } };
   const SO = {}, SOf = {}, nv = [0, 0, 0];
   const heightAt = (x, z) => W.ground(x, z);
-  const normalAt = (x, z, out = [0, 0, 0]) => W.normal(x, z, out, W.height);
+  const normalAt = (x, z, out = [0, 0, 0]) => W.normal(x, z, out, W.heightRef); // HILLS: tunnel floor when the reference (vehicle) is inside a tube
+  const TI = { floor: 0, s: 0, hw: 0, nx: 0, nz: 0, H: 0, depth: 0, type: 0 };
+  function tunnelAt(x, z) { const o = W.sample(x, z, SO); if (!W.inTunnel(o)) return null; TI.floor = o.tun; TI.s = o.ts; TI.hw = o.thw; TI.nx = o.tnx; TI.nz = o.tnz; TI.H = o.tH; TI.depth = o.tdep; TI.type = o.ttype; return TI; }
   const weather = createWeather({ heightAt, emit });
   // dryness 0..1: biome base, wetter near rivers / low ground, minus current wetness (rain)
   function drynessOf(o, x, z, wet) {
@@ -37,11 +39,11 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
     return Math.min(1, g * 1.2) * sst(0.55, 0.75, drynessOf(o, x, z, 0)) * (surf === W.SURF.DIRT ? 0.35 : 1);
   }
   function surfaceAt(x, z, out = {}) {
-    const o = W.sample(x, z, SO); normalAt(x, z, nv); const surf = W.surfaceOf(x, z, o, nv[1]), wet = weather.wetAt(x, z), b = W.biomeOf(o), P = W.SURF_PARAMS[surf];
+    const o = W.sample(x, z, SO); const tin = W.inTunnel(o), tfl = o.tun, tty = o.ttype; normalAt(x, z, nv); W.sample(x, z, SO); const surf = tin ? (tty === W.HWY ? W.SURF.ASPHALT : W.SURF.DIRT) : W.surfaceOf(x, z, o, nv[1]), wet = tin ? 0 : weather.wetAt(x, z), b = W.biomeOf(o), P = W.SURF_PARAMS[surf];
     const f = fire.stateAt(x, z);
     out.biome = b; out.biomeName = W.BIOME_NAMES[b]; out.surface = surf; out.surfaceName = W.SURF_NAMES[surf];
     out.dryness = drynessOf(o, x, z, wet); out.wet = wet; out.grip = P.mu * (1 - 0.25 * wet) * (f.burning ? 0.95 : 1); out.roll = P.roll; out.bs = P.bs;
-    out.road = o.road; out.water = o.h < W.WATER ? W.WATER - o.h : 0; out.height = o.deck > o.h ? o.deck : o.h; out.normal = [nv[0], nv[1], nv[2]];
+    out.road = tin ? 1 : o.road; out.water = !tin && o.h < W.WATER ? W.WATER - o.h : 0; out.height = tin ? tfl : o.deck > o.h ? o.deck : o.h; out.normal = [nv[0], nv[1], nv[2]];
     out.burning = f.burning; out.burnt = f.burnt; out.rain = weather.rainAt(x, z); out.weights = { grassland: o.bg, savanna: o.bs, forest: o.bf };
     return out;
   }
@@ -88,7 +90,7 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
     return null;
   }
   return {
-    heightAt, normalAt, surfaceAt, fuelAt, dryness: (x, z) => drynessOf(W.sample(x, z, SO), x, z, weather.wetAt(x, z)),
+    heightAt, normalAt, surfaceAt, fuelAt, groundAt: W.groundRef, roadGroundAt: W.roadGround, setRef: W.setRef, tunnelAt, dryness: (x, z) => drynessOf(W.sample(x, z, SO), x, z, weather.wetAt(x, z)),
     biomeAt: (x, z) => W.BIOME_NAMES[W.biomeOf(W.sample(x, z, SO))], findBiome,
     queryTrees: trees.queryTrees, damageTree: trees.damageTree, removeTree: trees.removeTree, setTreeHP: trees.setTreeHP, getTree: trees.getTree, igniteTree: trees.igniteTree, resetTrees: trees.reset,
     ignite: (x, z, o) => fire.ignite(x, z, o), fireAt: fire.stateAt, burningCells: fire.burningCells, extinguishAll: fire.extinguishAll, clearBurnt: fire.clearBurnt,

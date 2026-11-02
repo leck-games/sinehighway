@@ -183,7 +183,7 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
       else if (r < pF + pA) sp = SP.CONIFER; else if (r < pF + pA + pAc) sp = SP.ACACIA; else if (r < pF + pA + pAc + pS) sp = SP.SCRUB; else if (r < tot - pC) sp = SP.BROAD; else sp = SP.CACTUS;
       const x = (ci + 0.12 + 0.76 * hash2(ci, cj, 52)) * TC, z = (cj + 0.12 + 0.76 * hash2(ci, cj, 54)) * TC;
       const o = sample(x, z, SOt);
-      const ok = o.h > WATER + 1.0 && o.road < 0.02 && o.rd > 3 && o.riv > 3 && !(o.dom === REG.ALPINE && o.h > snowLine(x, z) - 10) && !(o.dom === REG.CANYON);
+      const ok = o.h > WATER + 1.0 && o.road < 0.02 && o.rd > 3 && o.tun < -1e8 && o.riv > 3 && !(o.dom === REG.ALPINE && o.h > snowLine(x, z) - 10) && !(o.dom === REG.CANYON);
       if (ok) {
         const s = sp === SP.SCRUB ? 0.8 + 0.7 * hash2(ci, cj, 55) : sp === SP.ACACIA ? 0.85 + 0.45 * hash2(ci, cj, 55) : 0.75 + 0.6 * hash2(ci, cj, 55);
         const v = 0.85 + 0.3 * hash2(ci, cj, 56), dry = sp === SP.SCRUB || sp === SP.ACACIA ? 1 : 0;

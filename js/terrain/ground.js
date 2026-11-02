@@ -2,7 +2,7 @@
 // water on the same grids, road ribbons, GPU-instanced grass (burnt grass collapses to black stubble).
 import * as THREE from 'three';
 import { sample, normal, surfaceOf, colourOf, grassDensity, hash2, clump } from './world.js';
-import { U, COMIC, GLSL_ENV, gridTerrainMat, waterMat, roadMat } from './comic.js';
+import { U, COMIC, GLSL_ENV, gridTerrainMat, waterMat, roadMat, tunnelMat } from './comic.js';
 import { createRoads } from './roads.js';
 
 const SWT = [[0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]; // sand, rock, snow, dirt
@@ -10,11 +10,11 @@ const SO = { h: 0 }, nv = [0, 1, 0], cv = [0, 0, 0];
 class Grid {
   constructor(scene, N, step, mat, withTex) {
     const n = this.n = N + 1; this.N = N; this.step = step;
-    this.H = new Float32Array(n * n); this.NRM = new Float32Array(n * n * 3); this.COL = new Float32Array(n * n * 3); this.SW = new Float32Array(n * n * 4); this.CW = new Float32Array(n * n);
+    this.H = new Float32Array(n * n); this.NRM = new Float32Array(n * n * 3); this.COL = new Float32Array(n * n * 3); this.SW = new Float32Array(n * n * 4); this.CW = new Float32Array(n * n); this.TN = new Float32Array(n * n * 3);
     this.gi0 = this.gj0 = null;
     const g = this.geo = new THREE.BufferGeometry();
-    this.pos = new Float32Array(n * n * 3); this.nor = new Float32Array(n * n * 3); this.col = new Float32Array(n * n * 3); this.sw = new Float32Array(n * n * 4); this.cw = new Float32Array(n * n);
-    g.setAttribute('cw', new THREE.BufferAttribute(this.cw, 1));
+    this.pos = new Float32Array(n * n * 3); this.nor = new Float32Array(n * n * 3); this.col = new Float32Array(n * n * 3); this.sw = new Float32Array(n * n * 4); this.cw = new Float32Array(n * n); this.tn = new Float32Array(n * n * 3);
+    g.setAttribute('cw', new THREE.BufferAttribute(this.cw, 1)); g.setAttribute('tn', new THREE.BufferAttribute(this.tn, 3)); // HILLS: tunnel flag / floor / height (portal hole)
     g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(this.nor, 3));
     g.setAttribute('color', new THREE.BufferAttribute(this.col, 3)); g.setAttribute('sw', new THREE.BufferAttribute(this.sw, 4));
     const idx = new (n * n > 65535 ? Uint32Array : Uint16Array)(N * N * 6); let q = 0;
@@ -33,6 +33,7 @@ class Grid {
     // (mattered most on the 16 m far grid, where cut slopes covered distant roads). Physics still uses the exact world.sample().
     this.H[k] = SO.rdd < s * 1.5 && SO.rb > 0.6 ? Math.min(SO.h, SO.rb - (s > 8 ? 0.9 : 0.06)) : SO.h; this.NRM.set(nv, k * 3); this.COL[k * 3] = cv[0] * j; this.COL[k * 3 + 1] = cv[1] * j; this.COL[k * 3 + 2] = cv[2] * j;
     this.SW.set(SWT[surf], k * 4);
+    if (SO.tun > -1e8) { this.TN[k * 3] = 1; this.TN[k * 3 + 1] = SO.tun; this.TN[k * 3 + 2] = SO.tH; } else this.TN[k * 3] = this.TN[k * 3 + 1] = this.TN[k * 3 + 2] = 0;
     // far-forest canopy weight (ground shader paints a cel canopy beyond the tree impostor range)
     this.CW[k] = (SO.h < 0.5 || SO.road > 0.05 || SO.riv < 8 || surf === 4 || surf === 5) ? 0 : Math.min(1, Math.max(0, (SO.bf * (0.42 + 0.5 * clump(x, z)) - 0.3) / 0.4));
     if (this.tdata) {
@@ -53,9 +54,9 @@ class Grid {
       this.pos[v3] = (gi0 + i) * s; this.pos[v3 + 1] = this.H[k]; this.pos[v3 + 2] = (gj0 + j) * s;
       this.nor[v3] = this.NRM[k3]; this.nor[v3 + 1] = this.NRM[k3 + 1]; this.nor[v3 + 2] = this.NRM[k3 + 2];
       this.col[v3] = this.COL[k3]; this.col[v3 + 1] = this.COL[k3 + 1]; this.col[v3 + 2] = this.COL[k3 + 2];
-      const v4 = v * 4, k4 = k * 4; this.sw[v4] = this.SW[k4]; this.sw[v4 + 1] = this.SW[k4 + 1]; this.sw[v4 + 2] = this.SW[k4 + 2]; this.sw[v4 + 3] = this.SW[k4 + 3]; this.cw[v] = this.CW[k];
+      const v4 = v * 4, k4 = k * 4; this.sw[v4] = this.SW[k4]; this.sw[v4 + 1] = this.SW[k4 + 1]; this.sw[v4 + 2] = this.SW[k4 + 2]; this.sw[v4 + 3] = this.SW[k4 + 3]; this.cw[v] = this.CW[k]; this.tn[v3] = this.TN[k3]; this.tn[v3 + 1] = this.TN[k3 + 1]; this.tn[v3 + 2] = this.TN[k3 + 2];
     } }
-    const a = this.geo.attributes; a.position.needsUpdate = a.normal.needsUpdate = a.color.needsUpdate = a.sw.needsUpdate = a.cw.needsUpdate = true;
+    const a = this.geo.attributes; a.position.needsUpdate = a.normal.needsUpdate = a.color.needsUpdate = a.sw.needsUpdate = a.cw.needsUpdate = a.tn.needsUpdate = true;
     if (this.tex) this.tex.needsUpdate = true;
     return true;
   }
@@ -138,7 +139,7 @@ export function createGround(scene, { small = false, grassCount, nearN, farN } =
   const waterF = new THREE.Mesh(far.geo, waterMat({ far: true, uNear })); waterF.frustumCulled = false; scene.add(waterF);
   const roads = createRoads(scene, (kind, tex) => {
     if (tex) { tex.colorSpace = THREE.NoColorSpace; tex.needsUpdate = true; }
-    return kind === 'asphalt' ? roadMat(tex, { offset: -4 }) : kind === 'dirt' ? roadMat(tex, { offset: -2 }) : roadMat(null, { col: 0xb4aca0 });
+    return kind === 'asphalt' ? roadMat(tex, { offset: -4 }) : kind === 'dirt' ? roadMat(tex, { offset: -2 }) : kind === 'tunnel' ? tunnelMat() : roadMat(null, { col: 0xb4aca0 });
   });
   const grass = createGrass(scene, near, { count: grassCount ?? (small ? 11000 : 16000), tile: 72 });
   return {
