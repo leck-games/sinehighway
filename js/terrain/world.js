@@ -130,11 +130,70 @@ const RG = 1400, HWY = 1, TRAIL = 2, LOOP = 3;
 // road half-widths (m). v2 widening: paved highways 6 -> 12 (2x), dirt trails 3.6 -> 5.4 and dirt race loops 8 -> 12 (1.5x).
 // Every mask (trees, rocks, grass, fuel, bridges, grade blend, shoulders) derives from e.hw, so they follow automatically.
 export const ROAD_HW = { hwy: 12, trail: 5.4, loop: 12 }, ROAD_HW_V1 = { hwy: 6, trail: 3.6, loop: 8 };
+
+// ---------------- RIM HIGHWAY (local): one closed 2x2-lane ring just inside the world rim ----------------
+// Polar squircle r(th) = A / (|cos|^6 + |sin|^6)^(1/6) (rounded corners, R >= ~2.4 km) with three small meanders; arc-length
+// parametrised (t = s / len) through lookup tables. Treated as a closed (loop) path of type HWY with the top crossing priority (id 'RIM'),
+// so every road that meets it is graded to its surface. NASCAR banking: per-station superelevation e.bk (slope, + = left side up) from
+// the design speed, smoothed into spiral transitions and faded to ~0 at junctions, bridges and tunnels; real geometry in the bed (sample)
+// and the ribbon (roads.js), so the physics feels it through heightAt/normalAt.
+export const RIM_HW = 16, RIM_A = 9380, RIM_V = 115, RIM_BANK_MIN = 3, RIM_BANK_MAX = 33, RIM_IN = 7900; // RIM_V: design speed (m/s) for the bank angle
+function rimR(th) { const c = C(th), s = S(th), c2 = c * c, s2 = s * s;
+  return RIM_A * Math.pow(c2 * c2 * c2 + s2 * s2 * s2, -1 / 6) * (1 + 0.012 * S(7 * th + 0.9) + 0.006 * S(12 * th + 2.1) + 0.003 * S(19 * th + 0.3)); }
+const RIM_N = 8192, RIM_TH = new Float32Array(RIM_N + 1), RIM_TS = new Float32Array(RIM_N + 1); let RIM_LEN = 0;
+{ const NI = 131072, h = 6.283185307179586 / NI, cum = new Float64Array(NI + 1);
+  for (let k = 0; k < NI; k++) { const a = k * h, r = rimR(a + h / 2), dr = (rimR(a + h) - rimR(a)) / h; cum[k + 1] = cum[k] + Math.hypot(r, dr) * h; }
+  RIM_LEN = cum[NI];
+  for (let k = 0; k <= RIM_N; k++) RIM_TS[k] = cum[k * NI / RIM_N] / RIM_LEN; // t at th = 2pi k/N
+  let j = 0; for (let k = 0; k <= RIM_N; k++) { const s = k / RIM_N * RIM_LEN; while (j < NI - 1 && cum[j + 1] < s) j++; RIM_TH[k] = (j + (s - cum[j]) / mx(1e-9, cum[j + 1] - cum[j])) * h; } }
+const wrap1 = t => t - fl(t);
+function rimTh(t) { const f = wrap1(t) * RIM_N, i = mn(RIM_N - 1, fl(f)); return RIM_TH[i] + (RIM_TH[i + 1] - RIM_TH[i]) * (f - i); }
+function rimT(th) { th = th / 6.283185307179586; const f = wrap1(th) * RIM_N, i = mn(RIM_N - 1, fl(f)); return RIM_TS[i] + (RIM_TS[i + 1] - RIM_TS[i]) * (f - i); }
+function rimK(th) { const h = 2e-3, r = rimR(th), a = rimR(th - h), b = rimR(th + h), r1 = (b - a) / (2 * h), r2 = (b - 2 * r + a) / (h * h);
+  return (r * r + 2 * r1 * r1 - r * r2) / Math.pow(r * r + r1 * r1, 1.5); } // signed curvature (+ = bends left = towards the centre)
+const RIM = { id: 'RIM', name: 'RIM HIGHWAY', rim: true, loop: true, type: HWY, hw: RIM_HW, k: 0, amp: 0, len: RIM_LEN, trk: { cx: 0, cz: 0, R: RIM_A } };
+// junction nodes: grid nodes within RIM_SNAP of the ring (or outside it) snap onto it; only highways connect (trails to them are dropped)
+const RIM_SNAP = 150;
+function nodeXZ(i, j) { return [(i + 0.5 + 0.55 * (hash(i, j, 11) - 0.5)) * RG, (j + 0.5 + 0.55 * (hash(i, j, 12) - 0.5)) * RG]; }
+function rimOuter(x, z) { return mx(A(x), A(z)) > RIM_IN - 400 && Math.hypot(x, z) > rimR(Math.atan2(z, x)) - RIM_SNAP; }
+let rimJ = null;
+export function rimJunctions() { baseProfile(RIM); return RIM.J; } // [{t, i, j, x, z, h}] where a highway meets the ring
+function rimNodes() { // outer grid nodes with a highway edge to an inner node (radial foot on the ring; placement refined in rimPlaceJunctions)
+  if (rimJ) return rimJ; rimJ = [];
+  const R = Math.ceil(WORLD / RG) + 2;
+  for (let i = -R; i < R; i++) for (let j = -R; j < R; j++) {
+    const [x, z] = nodeXZ(i, j); if (!rimOuter(x, z)) continue;
+    let hw = false; for (const [a, b, d] of [[i, j, 0], [i - 1, j, 0], [i, j, 1], [i, j - 1, 1]]) {
+      if (edgeType(a, b, d) !== HWY) continue; const [ox, oz] = d ? (b === j ? nodeXZ(i, j + 1) : nodeXZ(i, j - 1)) : (a === i ? nodeXZ(i + 1, j) : nodeXZ(i - 1, j)); if (!rimOuter(ox, oz)) hw = true; }
+    if (!hw) continue; const th = Math.atan2(z, x); rimJ.push({ t: rimT(th < 0 ? th + 6.283185307179586 : th), i, j });
+  }
+  rimJ.sort((a, b) => a.t - b.t); return rimJ;
+}
+// slide each junction along the ring (<= 750 m) to the nearest station that is open road: no tunnel / bridge within 120 m,
+// ground close to the road (no deep cut / high fill), so the joining highway arrives on an at-grade, flat (unbanked) stretch
+function rimPlaceJunctions(e, M, ds) {
+  const J = [], bad = i => { if (e.br[pmod(i, M)]) return true; const s = pmod(i, M) * ds; return e.tn && e.tn.some(t => s > t.s0 - 120 && s < t.s1 + 120) || (e.tn && e.tn.some(t => s + e.len > t.s0 - 120 && s + e.len < t.s1 + 120)); };
+  for (const q of rimNodes()) {
+    const i0 = Math.round(q.t * M); let best = null;
+    for (let k = -70; k <= 70; k++) { const i = pmod(i0 + k, M); let ok = true; for (let m = -4; m <= 4; m++) if (bad(i + m)) { ok = false; break; } if (!ok || J.some(q => A(pmod(Math.round(q.t * M) - i + M / 2, M) - M / 2) < 20)) continue; // keep 600 m between junctions
+      pathPoint(e, i / M, false); const c = A(natural(PP.x, PP.z) - e.prof[i]), sc = A(k) * ds / 150 + mx(0, A(k) - 25) * ds / 60 + mx(0, c - 1.5) * 2;
+      if (!best || sc < best.sc) best = { sc, i }; }
+    const i = best ? best.i : i0; pathPoint(e, i / M, false); J.push({ t: i / M, i: q.i, j: q.j, x: PP.x, z: PP.z, h: e.prof[i] });
+  }
+  e.J = J; e.jst = J.map(q => Math.round(q.t * M));
+}
+export function rimSpan(x, z, r) { // t window of the ring within ~r of (x,z) (null: ring not near). Used by meshes / maps (a 69 km path is never walked whole)
+  if (mx(A(x), A(z)) + r < RIM_IN) return null; const th = Math.atan2(z, x), t = rimT(th < 0 ? th + 6.283185307179586 : th), w = (r + 400) / RIM_LEN * 1.6;
+  return w >= 0.5 ? [0, 1] : [t - w, t + w];
+}
 const nodes = new Map();
 function nodeAt(i, j) {
   const key = (i + 5000) * 10000 + (j + 5000); let n = nodes.get(key);
   if (!n) {
-    const x = (i + 0.5 + 0.55 * (hash(i, j, 11) - 0.5)) * RG, z = (j + 0.5 + 0.55 * (hash(i, j, 12) - 0.5)) * RG;
+    let [x, z] = nodeXZ(i, j);
+    if (rimOuter(x, z)) { const q = rimJunctions().find(q => q.i === i && q.j === j); // junction node: its spot on the ring (or a dead outer node: radial foot)
+      if (q) n = { i, j, x: q.x, z: q.z, h: q.h, rim: true }; else { const th = Math.atan2(z, x), r = rimR(th); n = { i, j, x: r * C(th), z: r * S(th), h: 0, rim: true }; }
+      nodes.set(key, n); return n; }
     let h = 0; for (const [ox, oz] of [[0, 0], [40, 0], [-40, 0], [0, 40], [0, -40]]) h += natural(x + ox, z + oz) / 5;
     h = mx(h, WATER + 2.5);
     // ROADS OVER TERRAIN (local): a junction sitting on a race loop takes the loop's bed height, so the roads meeting there do not dam/bury it
@@ -154,35 +213,42 @@ function edgeAt(i, j, dir) {
   const type = edgeType(i, j, dir); let e = null;
   if (type) {
     const a = nodeAt(i, j), b = dir ? nodeAt(i, j + 1) : nodeAt(i + 1, j);
+    if ((a.rim && b.rim) || ((a.rim || b.rim) && type !== HWY)) { edges.set(key, null); return null; } // RIM: nothing runs along / dead-ends on the ring but highways
     const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz), k = 1 + fl(hash(i, j, 23 + dir) * (type === HWY ? 2 : 3));
-    const amp = (hash(i, j, 25 + dir) - 0.5) * 2 * (type === HWY ? 0.18 : 0.26) * L / (Math.PI * k);
+    const nearRim = rimOuter(a.x * 1.06, a.z * 1.06) || rimOuter(b.x * 1.06, b.z * 1.06); // edges close to the ring run straight (no meander into its shoulder)
+    const amp = nearRim ? 0 : (hash(i, j, 25 + dir) - 0.5) * 2 * (type === HWY ? 0.18 : 0.26) * L / (Math.PI * k);
     e = { id: key, type, a, b, ax: a.x, az: a.z, L, dx: dx / L, dz: dz / L, nx: -dz / L, nz: dx / L, amp, k, hw: type === HWY ? ROAD_HW.hwy : ROAD_HW.trail, loop: false };
     e.len = L; // profile is built lazily on first height query (crossing pins need the other roads' profiles)
   }
   edges.set(key, e); return e;
 }
 // path point: t in [0,1]; fills PP {x,z,tx,tz,y,curv,bridge}
-const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0, tun: 0 }; // tun: metres inside a tunnel (0 = open road)
+const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0, tun: 0, bank: 0 }; // bank: cross slope (+ = left side up) // tun: metres inside a tunnel (0 = open road)
 function pathPoint(e, t, wantY = true) {
   if (wantY && !e.pinned) buildProfile(e); // lazy build first: it reuses PP
-  if (e.loop) {
+  if (e.rim) {
+    const th = rimTh(t), r = rimR(th), dr = (rimR(th + 1e-4) - rimR(th - 1e-4)) / 2e-4;
+    PP.x = r * C(th); PP.z = r * S(th);
+    const tx = dr * C(th) - r * S(th), tz = dr * S(th) + r * C(th), l = Math.hypot(tx, tz); PP.tx = tx / l; PP.tz = tz / l;
+    if (e.bk) { const f = wrap1(t) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.bank = e.bk[i] + (e.bk[i + 1] - e.bk[i]) * u; PP.curv = e.kv[i] + (e.kv[i + 1] - e.kv[i]) * u; } else { PP.bank = 0; PP.curv = 0; }
+  } else if (e.loop) {
     const th = t * 6.283185307, r = trackR(e.trk, th), dr = trackDR(e.trk, th);
     PP.x = e.trk.cx + r * C(th); PP.z = e.trk.cz + r * S(th);
-    const tx = dr * C(th) - r * S(th), tz = dr * S(th) + r * C(th), l = Math.hypot(tx, tz); PP.tx = tx / l; PP.tz = tz / l; PP.curv = 0;
+    const tx = dr * C(th) - r * S(th), tz = dr * S(th) + r * C(th), l = Math.hypot(tx, tz); PP.tx = tx / l; PP.tz = tz / l; PP.curv = 0; PP.bank = 0;
   } else {
     const w = Math.PI * e.k, o = e.amp * S(w * t), o1 = e.amp * w * C(w * t) / e.L, o2 = -e.amp * w * w * S(w * t) / (e.L * e.L);
     PP.x = e.ax + e.dx * t * e.L + e.nx * o; PP.z = e.az + e.dz * t * e.L + e.nz * o;
-    const l = Math.sqrt(1 + o1 * o1); PP.tx = (e.dx + e.nx * o1) / l; PP.tz = (e.dz + e.nz * o1) / l; PP.curv = o2 / (l * l * l);
+    const l = Math.sqrt(1 + o1 * o1); PP.tx = (e.dx + e.nx * o1) / l; PP.tz = (e.dz + e.nz * o1) / l; PP.curv = o2 / (l * l * l); PP.bank = clamp(-PP.curv * 45, -0.07, 0.07);
   }
-  if (wantY) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.y = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; PP.bridge = e.br[u < 0.5 ? i : i + 1];
+  if (wantY) { if (e.rim) t = wrap1(t); const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.y = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; PP.bridge = e.br[u < 0.5 ? i : i + 1];
     if (e.pins) PP.y += pinAt(e, t); PP.tun = e.tn ? tunAt(e, clamp(t, 0, 1) * e.len) : 0; }
   return PP;
 }
-function profY(e, t) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; return e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; }
+function profY(e, t) { if (e.rim) t = wrap1(t); const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; return e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; }
 function buildProfile(e) { baseProfile(e); if (!e.pinned) { e.pinned = true; e.pins = crossPins(e); } }
 function baseProfile(e) {
   if (e.prof) return;
-  const len = e.loop ? 6.283 * e.trk.R * 1.1 : e.L, M = e.M = mx(8, Math.ceil(len / 30)), ds = len / M;
+  const len = e.rim ? RIM_LEN : e.loop ? 6.283 * e.trk.R * 1.1 : e.L, M = e.M = mx(8, Math.ceil(len / 30)), ds = len / M;
   const p = new Float32Array(M + 1), wet = new Uint8Array(M + 1);
   for (let i = 0; i <= M; i++) { pathPoint(e, i / M, false); p[i] = natural(PP.x, PP.z); wet[i] = p[i] < WATER + 0.6 ? 1 : 0; }
   // narrow rivers fall between 30 m profile samples -> probe 4 sub-samples per segment so grade crossings get a bridge instead of a dam
@@ -207,15 +273,63 @@ function baseProfile(e) {
   // could not reach the node within the grade limit) -> spread the residual linearly so every edge meets its nodes exactly
   if (e.loop) { const err = p[M] - p[0]; for (let i = 0; i <= M; i++) p[i] -= err * i / M; } // closed seam (the grade passes could leave a step at t=0/1)
   if (!e.loop) { const e0 = p[0] - e.a.h, e1 = p[M] - e.b.h; for (let i = 0; i <= M; i++) p[i] -= e0 * (1 - i / M) + e1 * (i / M); }
+  if (!e.loop && (e.a.rim || e.b.rim)) rimLanding(e, p, M, ds);
   hills(e, p, wet, M, ds);
   // bridges over short wet runs (rivers); long wet runs become causeways
   const br = new Uint8Array(M + 1);
-  if (!e.loop) for (let i = 0; i <= M;) {
+  if (!e.loop || e.rim) for (let i = 0; i <= M;) {
     if (!wet[i]) { i++; continue; } let j = i; while (j <= M && wet[j]) j++;
     if ((j - i) * ds < 340) { const s = mx(0, i - 1), t2 = mn(M, j); for (let k = s; k <= t2; k++) { br[k] = 1; p[k] = mx(p[k], WATER + 4.5); } }
     i = j;
   }
+  if (e.rim) { // RIM: viaducts where the graded ring would float on a high embankment (dry gorges, over-the-top ramps)
+    const nl = new Float32Array(M + 1); for (let i = 0; i <= M; i++) { pathPoint(e, i / M, false); nl[i] = mn(natural(PP.x, PP.z), natural(PP.x - PP.tz * e.hw, PP.z + PP.tx * e.hw), natural(PP.x + PP.tz * e.hw, PP.z - PP.tx * e.hw)); }
+    const tunS = i => e.tn && e.tn.some(t => i * ds > t.s0 - 40 && i * ds < t.s1 + 40);
+    const hi = i => p[i] - nl[i] > FILL_MAX + 4 && !tunS(i);
+    for (let i = 0; i <= M; i++) if (hi(i)) for (let k = -1; k <= 1; k++) { const j = pmod(i + k, M); if (!tunS(j)) br[j] = 1; }
+    br[M] = br[0];
+  }
   e.prof = p; e.br = br; e.ds = ds; e.len = len;
+  if (e.rim) { rimPlaceJunctions(e, M, ds); rimBank(e, M, ds); }
+}
+// RIM junctions: a highway arriving at the ring lands flat at the node height over the ring's width (+ a margin), then its profile
+// continues compressed into the remaining length (smooth corner) -> no step where a graded highway overlaps the flat ring pavement
+const RIM_LAND = RIM_HW + 26;
+function rimLanding(e, p, M, ds) {
+  const L = M * ds, sp = (v, k) => k * Math.log1p(Math.exp(v / k)); // softplus corner (~10 m)
+  const land = (n, o) => { if (!n.rim) return 0; const dx = o.x - n.x, dz = o.z - n.z, l = Math.hypot(dx, dz); pathDist(RIM, n.x, n.z); pathPoint(RIM, PD.t, false);
+    const sn = A(dx * PP.tz - dz * PP.tx) / l; return mn(0.4 * L, (RIM_HW + e.hw + 14) / mx(0.2, sn)); }; // grazing approach -> longer landing (whole overlap)
+  const la = land(e.a, e.b), lb = land(e.b, e.a), src = Float32Array.from(p);
+  for (let i = 0; i <= M; i++) { // station i reads the old profile at m(s): 0 over the landing at a / L over the landing at b, linear between
+    const s = i * ds, a = la ? sp(s - la, 10) - sp(-la, 10) : s, b = lb ? sp(L - s - lb, 10) - sp(-lb, 10) : L - s;
+    const m = clamp(a / mx(1e-6, a + b) * L, 0, L), f = m / ds, k = mn(M - 1, fl(f)); p[i] = src[k] + (src[k + 1] - src[k]) * (f - k); }
+  // over the landing the highway follows the ring surface under it (the ring may climb along a grazing overlap), easing back over 90 m
+  const rimY = (x, z) => { if (!pathDist(RIM, x, z)) return null; const s = PD.s; pathPoint(RIM, PD.t); return PP.y + clamp(s, -RIM_HW, RIM_HW) * PP.bank; };
+  for (const [l, end] of [[la, 0], [lb, 1]]) { if (!l) continue; let off = 0;
+    for (let i = 0; i <= M; i++) { const s = end ? L - i * ds : i * ds; if (s > l + 90) continue; pathPoint(e, i / M, false); const y = rimY(PP.x, PP.z);
+      if (s <= l) { if (y != null) p[i] = y; } else { const sl = l; pathPoint(e, (end ? L - sl : sl) / L, false); const y0 = rimY(PP.x, PP.z); off = y0 == null ? 0 : y0 - (end ? e.b.h : e.a.h); p[i] += off * sst(l + 90, l, s); } } }
+  p[0] = e.a.h; p[M] = e.b.h;
+  e.land = [la ? Math.ceil(la / ds) : 0, lb ? Math.ceil(lb / ds) : 0];
+}
+// RIM banking: theta = atan(V^2 k / g) at the design speed, clamped to [MIN, MAX] deg, smoothed (spiral transitions), x fade
+// (~0 within 150 m of a junction / on bridges / in tunnels, full again ~450 m away). Stored as slope tan(theta), sign = -sign(k) (outer edge up).
+let RIM_BANK_SCALE = 1; export function setRimBankScale(k) { RIM_BANK_SCALE = k; if (RIM.bk) { RIM.prof = null; RIM.pinned = false; RIM.bk = null; baseProfile(RIM); } } // tests: 0 = flat ring
+function rimBank(e, M, ds) {
+  const kv = new Float32Array(M + 1), tb = new Float32Array(M + 1), q = new Float32Array(M + 1), fd = new Float32Array(M + 1), D = Math.PI / 180;
+  for (let i = 0; i <= M; i++) kv[i] = rimK(rimTh(i / M));
+  for (let i = 0; i <= M; i++) { const ang = clamp(Math.atan(RIM_V * RIM_V * A(kv[i]) / 9.81), RIM_BANK_MIN * D, RIM_BANK_MAX * D); tb[i] = -Math.sign(kv[i] || 1) * Math.tan(ang); }
+  const W = 8, box = a => { for (let i = 0; i < M; i++) { let s = 0; for (let k = -W; k <= W; k++) s += a[pmod(i + k, M)]; q[i] = s / (2 * W + 1); } q[M] = q[0]; a.set(q); };
+  box(tb); box(tb); box(tb);
+  // distance (m) to the nearest flat-forced station (junction, bridge, tunnel), circular
+  const flat = new Uint8Array(M); for (const j of e.jst || []) flat[pmod(j, M)] = 1;
+  for (let i = 0; i < M; i++) if (e.br[i]) flat[i] = 1;
+  if (e.tn) for (const t of e.tn) for (let j = Math.floor(t.s0 / ds); j <= Math.ceil(t.s1 / ds); j++) if (j >= 0 && j < M) flat[j] = 1;
+  for (let i = 0; i < M; i++) fd[i] = flat[i] ? 0 : 1e9;
+  for (let r = 0; r < 2; r++) { for (let k = 1; k < 2 * M; k++) { const i = k % M, j = (k - 1) % M; fd[i] = mn(fd[i], fd[j] + ds); } for (let k = 2 * M - 2; k >= 0; k--) { const i = k % M, j = (k + 1) % M; fd[i] = mn(fd[i], fd[j] + ds); } }
+  for (let i = 0; i < M; i++) tb[i] *= RIM_BANK_SCALE * (fd[i] > 1e8 ? 1 : sst(150, 450, fd[i])); tb[M] = tb[0];
+  const W2 = 2; for (let i = 0; i < M; i++) { let s = 0; for (let k = -W2; k <= W2; k++) s += tb[pmod(i + k, M)]; q[i] = s / (2 * W2 + 1); } q[M] = q[0];
+  for (let i = 0; i <= M; i++) if (fd[i % M] < 1) q[i] = 0; // exactly flat on bridges / tunnel floors / junction nodes
+  e.bk = Float32Array.from(q); e.kv = kv;
 }
 // ---------------- HILLS (local): no canyon cuts. The smoothed/grade-clamped profile used to slice up to ~40 m deep through ridges,
 // so big hills read as walled roads. Cuts are capped at CUT_MAX and fills at FILL_MAX (vs. lightly smoothed natural ground);
@@ -238,6 +352,7 @@ function hills(e, p, wet, M, ds) {
   const wn = new Uint8Array(M + 1); for (let i = 0; i <= M; i++) if (wet[i]) for (let k = -2; k <= 2; k++) { const j = at(i + k); if (j >= 0 && j <= M) wn[j] = 1; }
   const G = OT_GRADE[e.type] * ds, pin = new Uint8Array(M + 1), cone = new Float32Array(M + 1);
   if (!loop) pin[0] = pin[M] = 1; // junction nodes keep their exact height
+  if (e.land) { for (let i = 0; i <= e.land[0]; i++) pin[i] = 1; for (let i = 0; i <= e.land[1]; i++) pin[M - i] = 1; } // RIM landings stay flat
   const reach = (up) => { // cone of heights reachable from the pinned stations at grade G (up: lowest allowed top / down: highest allowed bottom)
     for (let i = 0; i <= M; i++) cone[i] = pin[i] ? p[i] : up ? 1e9 : -1e9; envelope(cone, M, loop, G, !up); return cone; };
   // 1. fill cap (embankments): lower-only envelope from natural + FILL_MAX; bridges / wet stations keep their height
@@ -253,7 +368,7 @@ function hills(e, p, wet, M, ds) {
     // over-the-top candidate: how high would the re-graded road float over the ground around this run?
     lb.fill(-1e9); for (let k = r.a; k <= r.b; k++) lb[at(k)] = ns[at(k)] - CUT_MAX + 0.5; envelope(lb, M, loop, G, true);
     let fo = 0; for (let i = 0; i <= M; i++) if (lb[i] > p[i] && !wn[i]) fo = mx(fo, lb[i] - nl[i]);
-    if (!loop) { const ke = Math.ceil(TUN_END / ds); r.ta = mx(r.a, ke); r.tb = mn(r.b, M - ke); } else { r.ta = r.a; r.tb = r.b; } // portals stay clear of junctions
+    if (!loop) { const ke = Math.ceil(TUN_END / ds), kr = Math.ceil((TUN_END + RIM_HW + 75) / ds); r.ta = mx(r.a, e.a.rim ? kr : ke); r.tb = mn(r.b, M - (e.b.rim ? kr : ke)); } else { r.ta = r.a; r.tb = r.b; } // portals stay clear of junctions (RIM ends: wider, the hill kept over a bore must not bury the ring)
     const L = (r.tb - r.ta + 1) * ds;
     r.tun = r.tb >= r.ta && ((L >= TUN_LEN && r.mc > TUN_CUT) || fo > TUN_FILL);
     if (r.tun) { const ra = r.a, rb = r.b; r.a = r.ta; r.b = r.tb; // portals where the cut crosses CUT_MAX (interpolated between stations)
@@ -301,6 +416,7 @@ function pinAt(e, t) { // piecewise: plateau at each crossing, smooth blend betw
   return v;
 }
 function crossPins(e) {
+  if (e.rim) return null; // top priority: every other road meets the ring
   const len = e.len, n = Math.ceil(len / 5), pins = [];
   pathPoint(e, 0.5, false); const cx = PP.x, cz = PP.z;
   const rad = e.loop ? e.trk.R * 1.4 + 60 : len / 2 + A(e.amp) + 60;
@@ -322,7 +438,7 @@ function crossPins(e) {
     for (const r of pathsNear(b.x, b.z, 60)) { if (r === e || !above(r, e) || !pathDist(r, b.x, b.z)) continue; if (PD.d < bd) { bd = PD.d; tgt = { r, t: PD.t, s: PD.s }; } }
     if (!tgt) continue;
     pathPoint(tgt.r, tgt.t); if (PP.bridge || PP.tun) continue; // HILLS: no level crossing with a road inside its tunnel (it passes under)
-    const bank = tgt.r.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07), ho = PP.y + clamp(tgt.s, -tgt.r.hw, tgt.r.hw) * bank;
+    const bank = PP.bank, ho = PP.y + clamp(tgt.s, -tgt.r.hw, tgt.r.hw) * bank;
     const sn = A(b.tx * PP.tz - b.tz * PP.tx), cs = A(b.tx * PP.tx + b.tz * PP.tz);
     const f = b.t * e.M, i = mn(e.M - 1, fl(f)), u = f - i, he = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u;
     if (e.br[u < 0.5 ? i : i + 1] || (e.tn && tunAt(e, b.t * len))) continue;
@@ -337,7 +453,8 @@ function crossPins(e) {
 // ---------------- race loops: one closed polar sine curve per 3 km lattice cell (kept from v1) ----------------
 const CELL = 3000;
 export function trackOf(ci, cj) {
-  const cx = (ci + 0.5) * CELL + (hash(ci, cj, 1) - 0.5) * 900, cz = (cj + 0.5) * CELL + (hash(ci, cj, 2) - 0.5) * 900;
+  let cx = (ci + 0.5) * CELL + (hash(ci, cj, 1) - 0.5) * 900, cz = (cj + 0.5) * CELL + (hash(ci, cj, 2) - 0.5) * 900;
+  if (A(cx) > 9000) cx = Math.sign(cx) * 14000; if (A(cz) > 9000) cz = Math.sign(cz) * 14000; // RIM: race loops of the edge cells would cut the ring -> out in the wall (never reached)
   return { id: ci + ',' + cj, cx, cz, R: 280 + hash(ci, cj, 3) * 300, p1: hash(ci, cj, 4) * 6.28, p2: hash(ci, cj, 5) * 6.28, k: 2 + fl(hash(ci, cj, 6) * 3) };
 }
 export function trackR(t, th) { return t.R * (1 + 0.22 * S(t.k * th + t.p1) + 0.12 * S((t.k + 1) * th + t.p2)); }
@@ -366,6 +483,12 @@ function cellEdges(ci, cj) {
 // distance from (x,z) to path e -> fills PD {d (unsigned), s (signed lateral, + = normal side), t}
 const PD = { d: 1e9, s: 0, t: 0 };
 function pathDist(e, x, z) { // loops: radial offset scaled to the perpendicular distance, so the drivable width matches the mesh ribbon
+  if (e.rim) {
+    if (mx(A(x), A(z)) < RIM_IN - 150) return false;
+    const th = Math.atan2(z, x), r = rimR(th), rr = Math.hypot(x, z); if (A(rr - r) > 260) return false;
+    PD.s = r - rr; PD.d = A(PD.s); PD.t = rimT(th < 0 ? th + 6.283185307179586 : th);
+    if (PD.d < e.hw + CORE + 62) footRefine(e, x, z); return true;
+  }
   if (e.loop) {
     const T = e.trk, dx = x - T.cx, dz = z - T.cz, th = Math.atan2(dz, dx), r = trackR(T, th), rr = Math.hypot(dx, dz);
     PD.s = (rr - r) * r / Math.hypot(r, trackDR(T, th)); PD.d = A(PD.s); PD.t = (th < 0 ? th + 6.283185307 : th) / 6.283185307;
@@ -421,12 +544,13 @@ export function sample(x, z, o = OUT) {
   const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn, rdd = 1e9, rb = 0, tun = -1e9, tsd = 1e9, cover = -1e9;
   const list = cellEdges(fl(x / RG), fl(z / RG));
   const tk = nearTrack(x, z);
-  for (let n = -1; n < list.length; n++) {
-    const e = n < 0 ? tk.path : list[n];
+  const rimOn = mx(A(x), A(z)) > RIM_IN - 150;
+  for (let n = rimOn ? -2 : -1; n < list.length; n++) {
+    const e = n === -2 ? RIM : n < 0 ? tk.path : list[n];
     if (!pathDist(e, x, z)) continue;
     const d = PD.d; if (d > e.hw + CORE + 62) continue;
     pathPoint(e, PD.t);
-    const bank = e.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07);
+    const bank = PP.bank;
     const hb = PP.y + clamp(PD.s, -e.hw, e.hw) * bank;
     if (PP.tun > 0) { // HILLS: tunnel bore -> no bed carve / road flag; the hill is kept (and topped up) over the tube
       const F = e.hw + TUN_W, cov = PP.y + TUN_H[e.type] + 1.8;
@@ -435,7 +559,7 @@ export function sample(x, z, o = OUT) {
       continue;
     }
     const span = PP.bridge && hn < hb; // ROADS OVER TERRAIN (local): a bridge station only floats over ground that is lower than its deck; at abutments/banks the bed is carved like any road
-    if (!span && d - e.hw < rdd) { rdd = d - e.hw; rb = PP.y - A(e.hw * bank); } // lowest edge of the nearest bed (render grids keep under it)
+    if (!span && d - e.hw < rdd) { rdd = d - e.hw; rb = e.rim ? hb : PP.y - A(e.hw * bank); } // lowest edge of the nearest bed (render grids keep under it)
     const core = e.hw + CORE, blend = mn(60, 8 + 1.3 * A(hn - hb));
     if (d > core + blend) continue;
     let w = d < core ? 1 : sst(core + blend, core, d);
@@ -524,9 +648,10 @@ export function pathsNear(x, z, r) {
   const res = new Set(), c0 = fl((x - r) / RG), c1 = fl((x + r) / RG), d0 = fl((z - r) / RG), d1 = fl((z + r) / RG);
   for (let i = c0; i <= c1; i++) for (let j = d0; j <= d1; j++) for (const e of cellEdges(i, j)) res.add(e);
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) res.add(nearTrack(x + i * CELL, z + j * CELL).path);
+  if (mx(A(x), A(z)) + r > RIM_IN - 150) res.add(RIM);
   return [...res];
 }
-export { pathPoint, PP, HWY, TRAIL, LOOP };
+export { pathPoint, PP, HWY, TRAIL, LOOP, RIM, rimR };
 export function trackSD(x, z) { // signed radial distance to nearest race-loop centre-line (graphics-branch compat)
   const t = nearTrack(x, z), dx = x - t.cx, dz = z - t.cz;
   return Math.hypot(dx, dz) - trackR(t, Math.atan2(dz, dx));
