@@ -8,5 +8,5 @@ cp "$SRC"/MODULE_API.md js/terrain/MODULE_API.md
 REV=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)
 echo "vendored from sinerally-terrain@$REV on $(date +%F)" > js/terrain/VERSION
 # local game-side changes (tree LOD option treeNearR, impostor trunk cracks, IMAX, sky dome + hazeAt fog) live in tools/terrain-local.patch
-patch -p1 --forward < tools/terrain-local.patch && echo "+ terrain-local.patch (local: impostor-only trees option, FUEL-style sky + haze fog, roads-over-terrain: crossing pins, bridge spans, road-safe render grids, tree variety: spruce/birch/oak/poplar/bush/bare + autumn, impostor-only)" >> js/terrain/VERSION
+patch -p1 --forward < tools/terrain-local.patch && echo "+ terrain-local.patch (local: impostor-only trees option, FUEL-style sky + haze fog, roads-over-terrain: crossing pins, bridge spans, road-safe render grids, tree variety: spruce/birch/oak/poplar/bush/bare + autumn, impostor-only, hills: cut/fill caps, over-the-top grading, tunnels)" >> js/terrain/VERSION
 echo "terrain synced @$REV (+ local patch)"

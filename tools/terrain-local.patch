@@ -1,6 +1,6 @@
 diff -ruN a/js/terrain/comic.js b/js/terrain/comic.js
 --- a/js/terrain/comic.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/comic.js	2026-11-01 19:43:40.080201605 +0100
++++ b/js/terrain/comic.js	2026-11-02 18:37:25.687013570 +0100
 @@ -18,7 +18,19 @@
    uWetT: { value: dtex(2, 2, new Uint8Array(16)) }, uWetO: { value: new THREE.Vector4(-1e5, -1e5, 2e5, 0) },
    uFireT: { value: dtex(2, 2, new Uint8Array(16)) }, uFireO: { value: new THREE.Vector4(-1e5, -1e5, 1, 0) }, // origin xz, size, valid
@@ -39,11 +39,44 @@ diff -ruN a/js/terrain/comic.js b/js/terrain/comic.js
  vec3 comicL(vec3 albedo, vec3 N, vec3 wpos, float hatchK, float shade){
    vec3 V = normalize(cameraPosition - wpos);
    float l = (dot(N, uSun) * 0.5 + 0.5) * (1.0 - 0.45 * shade);
-@@ -221,17 +233,31 @@
+@@ -97,7 +109,7 @@
+ // ---------------- terrain (ring-buffer grids): biome vertex colours + procedural comic detail + env ----------------
+ export function gridTerrainMat({ far = false, uNear = null } = {}) {
+   return new THREE.ShaderMaterial({ uniforms: far ? { ...U, uNear } : U, vertexColors: true, defines: far ? { FAR: 1 } : {},
+-    vertexShader: `attribute vec4 sw; attribute float cw; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw;
++    vertexShader: `attribute vec4 sw; attribute float cw; attribute vec3 tn; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw; varying vec3 vTn;
+       #ifdef FAR
+         uniform vec3 uNear;
+       #endif
+@@ -105,10 +117,11 @@
+         #ifdef FAR
+           vec2 dd = abs(p.xz - uNear.xy); float m = max(dd.x, dd.y); p.y -= 8.0 * clamp((uNear.z - 10.0 - m) / 10.0, 0.0, 1.0);
+         #endif
+-        vW = p; vN = normal; vC = color; vS = sw; vCw = cw; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.); }`,
+-    fragmentShader: COMIC + `uniform vec2 uCanR; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw;
++        vW = p; vN = normal; vC = color; vS = sw; vCw = cw; vTn = tn; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.); }`,
++    fragmentShader: COMIC + `uniform vec2 uCanR; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw; varying vec3 vTn;
+       void main(){
+         vec3 N = normalize(vN); float x = vW.x, z = vW.z, h = vW.y;
++        if (vTn.x > 0.02) { float tf = vTn.y / vTn.x; if (h > tf - 0.4 && h < tf + vTn.z / vTn.x) discard; } // HILLS: portal hole (slanted grid faces across the tunnel mouth)
+         vec3 c = vC;
+         float gW = clamp(1. - vS.x - vS.y - vS.z - vS.w, 0., 1.);
+         float pat = sin(x*0.09 + sin(z*0.07)*2.) * sin(z*0.08 + sin(x*0.05)*2.);
+@@ -221,17 +234,41 @@
          c = wetShade(c, N, vW, wetAt(vW.xz));
          gl_FragColor = vec4(comic(c, N, vW, hk), ncode(N)); }` });
  }
 -// sky: posterized gradient, comic sun/moon/stars; overcast darkening from local cloud cover (uRain)
++// HILLS: tunnel tube / portals: merged low-poly geometry, vertex colours (a > 0.5 = emissive light strip), comic-shaded, both sides
++export function tunnelMat() {
++  return new THREE.ShaderMaterial({ uniforms: U, side: THREE.DoubleSide,
++    vertexShader: `attribute vec4 tc; varying vec3 vW; varying vec3 vN; varying vec4 vC;
++      void main(){ vC = tc; vW = position; vN = normal; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.); }`,
++    fragmentShader: COMIC + `varying vec3 vW; varying vec3 vN; varying vec4 vC;
++      void main(){ vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
++        vec3 c = vC.a > 0.5 ? fogMix(vC.rgb, vW, 1.0) : max(comic(vC.rgb, N, vW, 0.2), fogMix(vC.rgb * 0.5, vW, 1.0));
++        gl_FragColor = vec4(c, ncode(N)); }` });
++}
 +// sky: smooth dithered gradient dome (horizon haze band -> zenith), warm sun disc + glow, optional drifting cirrus,
 +// comic moon/stars at night, overcast darkening from local cloud cover (uRain). Writes alpha 1.0 = "sky" for the post pass.
  export function skyMat() {
@@ -76,7 +109,7 @@ diff -ruN a/js/terrain/comic.js b/js/terrain/comic.js
          if (uNight > 0.01) {
            vec3 g = floor(d * 140.); float st = step(0.996, h31(g)) * smoothstep(0.02, 0.2, d.y);
            c = mix(c, vec3(1., .97, .85), st * uNight * (1. - uRain));
-@@ -239,12 +265,13 @@
+@@ -239,12 +276,13 @@
            c = mix(c, vec3(.06,.05,.08), step(0.9975, mo) * uNight);
            c = mix(c, vec3(.95,.95,.85) - step(0.9993, dot(d, normalize(uSun + vec3(.02,.02,0.)))) * 0.25, step(0.998, mo) * uNight);
          }
@@ -97,8 +130,32 @@ diff -ruN a/js/terrain/comic.js b/js/terrain/comic.js
  }
 diff -ruN a/js/terrain/ground.js b/js/terrain/ground.js
 --- a/js/terrain/ground.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/ground.js	2026-11-01 19:43:40.080201605 +0100
-@@ -28,7 +28,10 @@
++++ b/js/terrain/ground.js	2026-11-02 18:37:25.687013570 +0100
+@@ -2,7 +2,7 @@
+ // water on the same grids, road ribbons, GPU-instanced grass (burnt grass collapses to black stubble).
+ import * as THREE from 'three';
+ import { sample, normal, surfaceOf, colourOf, grassDensity, hash2, clump } from './world.js';
+-import { U, COMIC, GLSL_ENV, gridTerrainMat, waterMat, roadMat } from './comic.js';
++import { U, COMIC, GLSL_ENV, gridTerrainMat, waterMat, roadMat, tunnelMat } from './comic.js';
+ import { createRoads } from './roads.js';
+ 
+ const SWT = [[0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]; // sand, rock, snow, dirt
+@@ -10,11 +10,11 @@
+ class Grid {
+   constructor(scene, N, step, mat, withTex) {
+     const n = this.n = N + 1; this.N = N; this.step = step;
+-    this.H = new Float32Array(n * n); this.NRM = new Float32Array(n * n * 3); this.COL = new Float32Array(n * n * 3); this.SW = new Float32Array(n * n * 4); this.CW = new Float32Array(n * n);
++    this.H = new Float32Array(n * n); this.NRM = new Float32Array(n * n * 3); this.COL = new Float32Array(n * n * 3); this.SW = new Float32Array(n * n * 4); this.CW = new Float32Array(n * n); this.TN = new Float32Array(n * n * 3);
+     this.gi0 = this.gj0 = null;
+     const g = this.geo = new THREE.BufferGeometry();
+-    this.pos = new Float32Array(n * n * 3); this.nor = new Float32Array(n * n * 3); this.col = new Float32Array(n * n * 3); this.sw = new Float32Array(n * n * 4); this.cw = new Float32Array(n * n);
+-    g.setAttribute('cw', new THREE.BufferAttribute(this.cw, 1));
++    this.pos = new Float32Array(n * n * 3); this.nor = new Float32Array(n * n * 3); this.col = new Float32Array(n * n * 3); this.sw = new Float32Array(n * n * 4); this.cw = new Float32Array(n * n); this.tn = new Float32Array(n * n * 3);
++    g.setAttribute('cw', new THREE.BufferAttribute(this.cw, 1)); g.setAttribute('tn', new THREE.BufferAttribute(this.tn, 3)); // HILLS: tunnel flag / floor / height (portal hole)
+     g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(this.nor, 3));
+     g.setAttribute('color', new THREE.BufferAttribute(this.col, 3)); g.setAttribute('sw', new THREE.BufferAttribute(this.sw, 4));
+     const idx = new (n * n > 65535 ? Uint32Array : Uint16Array)(N * N * 6); let q = 0;
+@@ -28,8 +28,12 @@
      const s = this.step, x = gi * s, z = gj * s, k = this.ri(gj) * this.n + this.ri(gi);
      sample(x, z, SO); normal(x, z, nv); const surf = surfaceOf(x, z, SO, nv[1]); colourOf(x, z, SO, nv[1], surf, cv);
      const j = 0.94 + 0.12 * hash2(gi, gj, 3);
@@ -108,12 +165,35 @@ diff -ruN a/js/terrain/ground.js b/js/terrain/ground.js
 +    // (mattered most on the 16 m far grid, where cut slopes covered distant roads). Physics still uses the exact world.sample().
 +    this.H[k] = SO.rdd < s * 1.5 && SO.rb > 0.6 ? Math.min(SO.h, SO.rb - (s > 8 ? 0.9 : 0.06)) : SO.h; this.NRM.set(nv, k * 3); this.COL[k * 3] = cv[0] * j; this.COL[k * 3 + 1] = cv[1] * j; this.COL[k * 3 + 2] = cv[2] * j;
      this.SW.set(SWT[surf], k * 4);
++    if (SO.tun > -1e8) { this.TN[k * 3] = 1; this.TN[k * 3 + 1] = SO.tun; this.TN[k * 3 + 2] = SO.tH; } else this.TN[k * 3] = this.TN[k * 3 + 1] = this.TN[k * 3 + 2] = 0;
      // far-forest canopy weight (ground shader paints a cel canopy beyond the tree impostor range)
      this.CW[k] = (SO.h < 0.5 || SO.road > 0.05 || SO.riv < 8 || surf === 4 || surf === 5) ? 0 : Math.min(1, Math.max(0, (SO.bf * (0.42 + 0.5 * clump(x, z)) - 0.3) / 0.4));
+     if (this.tdata) {
+@@ -50,9 +54,9 @@
+       this.pos[v3] = (gi0 + i) * s; this.pos[v3 + 1] = this.H[k]; this.pos[v3 + 2] = (gj0 + j) * s;
+       this.nor[v3] = this.NRM[k3]; this.nor[v3 + 1] = this.NRM[k3 + 1]; this.nor[v3 + 2] = this.NRM[k3 + 2];
+       this.col[v3] = this.COL[k3]; this.col[v3 + 1] = this.COL[k3 + 1]; this.col[v3 + 2] = this.COL[k3 + 2];
+-      const v4 = v * 4, k4 = k * 4; this.sw[v4] = this.SW[k4]; this.sw[v4 + 1] = this.SW[k4 + 1]; this.sw[v4 + 2] = this.SW[k4 + 2]; this.sw[v4 + 3] = this.SW[k4 + 3]; this.cw[v] = this.CW[k];
++      const v4 = v * 4, k4 = k * 4; this.sw[v4] = this.SW[k4]; this.sw[v4 + 1] = this.SW[k4 + 1]; this.sw[v4 + 2] = this.SW[k4 + 2]; this.sw[v4 + 3] = this.SW[k4 + 3]; this.cw[v] = this.CW[k]; this.tn[v3] = this.TN[k3]; this.tn[v3 + 1] = this.TN[k3 + 1]; this.tn[v3 + 2] = this.TN[k3 + 2];
+     } }
+-    const a = this.geo.attributes; a.position.needsUpdate = a.normal.needsUpdate = a.color.needsUpdate = a.sw.needsUpdate = a.cw.needsUpdate = true;
++    const a = this.geo.attributes; a.position.needsUpdate = a.normal.needsUpdate = a.color.needsUpdate = a.sw.needsUpdate = a.cw.needsUpdate = a.tn.needsUpdate = true;
+     if (this.tex) this.tex.needsUpdate = true;
+     return true;
+   }
+@@ -135,7 +139,7 @@
+   const waterF = new THREE.Mesh(far.geo, waterMat({ far: true, uNear })); waterF.frustumCulled = false; scene.add(waterF);
+   const roads = createRoads(scene, (kind, tex) => {
+     if (tex) { tex.colorSpace = THREE.NoColorSpace; tex.needsUpdate = true; }
+-    return kind === 'asphalt' ? roadMat(tex, { offset: -4 }) : kind === 'dirt' ? roadMat(tex, { offset: -2 }) : roadMat(null, { col: 0xb4aca0 });
++    return kind === 'asphalt' ? roadMat(tex, { offset: -4 }) : kind === 'dirt' ? roadMat(tex, { offset: -2 }) : kind === 'tunnel' ? tunnelMat() : roadMat(null, { col: 0xb4aca0 });
+   });
+   const grass = createGrass(scene, near, { count: grassCount ?? (small ? 11000 : 16000), tile: 72 });
+   return {
 diff -ruN a/js/terrain/index.js b/js/terrain/index.js
 --- a/js/terrain/index.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/index.js	2026-11-01 19:43:40.080201605 +0100
-@@ -12,7 +12,7 @@
++++ b/js/terrain/index.js	2026-11-02 18:37:25.687013570 +0100
+@@ -12,14 +12,16 @@
  const BASE_DRY = [0.86, 0.93, 0.22, 0.97, 0.82, 0.38];
  
  export { W as world, U as uniforms, SPECIES };
@@ -122,7 +202,27 @@ diff -ruN a/js/terrain/index.js b/js/terrain/index.js
    const listeners = new Map();
    const emit = (type, detail) => { (listeners.get(type) || []).forEach(f => { try { f(detail); } catch (e) { console.error(e); } }); if (bus) (bus.emit || bus.fire || (() => {})).call(bus, type, detail); };
    const on = (type, f) => { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(f); return () => off(type, f); };
-@@ -45,7 +45,7 @@
+   const off = (type, f) => { const a = listeners.get(type); if (a) { const i = a.indexOf(f); if (i >= 0) a.splice(i, 1); } };
+   const SO = {}, SOf = {}, nv = [0, 0, 0];
+   const heightAt = (x, z) => W.ground(x, z);
+-  const normalAt = (x, z, out = [0, 0, 0]) => W.normal(x, z, out, W.height);
++  const normalAt = (x, z, out = [0, 0, 0]) => W.normal(x, z, out, W.heightRef); // HILLS: tunnel floor when the reference (vehicle) is inside a tube
++  const TI = { floor: 0, s: 0, hw: 0, nx: 0, nz: 0, H: 0, depth: 0, type: 0 };
++  function tunnelAt(x, z) { const o = W.sample(x, z, SO); if (!W.inTunnel(o)) return null; TI.floor = o.tun; TI.s = o.ts; TI.hw = o.thw; TI.nx = o.tnx; TI.nz = o.tnz; TI.H = o.tH; TI.depth = o.tdep; TI.type = o.ttype; return TI; }
+   const weather = createWeather({ heightAt, emit });
+   // dryness 0..1: biome base, wetter near rivers / low ground, minus current wetness (rain)
+   function drynessOf(o, x, z, wet) {
+@@ -37,15 +39,15 @@
+     return Math.min(1, g * 1.2) * sst(0.55, 0.75, drynessOf(o, x, z, 0)) * (surf === W.SURF.DIRT ? 0.35 : 1);
+   }
+   function surfaceAt(x, z, out = {}) {
+-    const o = W.sample(x, z, SO); normalAt(x, z, nv); const surf = W.surfaceOf(x, z, o, nv[1]), wet = weather.wetAt(x, z), b = W.biomeOf(o), P = W.SURF_PARAMS[surf];
++    const o = W.sample(x, z, SO); const tin = W.inTunnel(o), tfl = o.tun, tty = o.ttype; normalAt(x, z, nv); W.sample(x, z, SO); const surf = tin ? (tty === W.HWY ? W.SURF.ASPHALT : W.SURF.DIRT) : W.surfaceOf(x, z, o, nv[1]), wet = tin ? 0 : weather.wetAt(x, z), b = W.biomeOf(o), P = W.SURF_PARAMS[surf];
+     const f = fire.stateAt(x, z);
+     out.biome = b; out.biomeName = W.BIOME_NAMES[b]; out.surface = surf; out.surfaceName = W.SURF_NAMES[surf];
+     out.dryness = drynessOf(o, x, z, wet); out.wet = wet; out.grip = P.mu * (1 - 0.25 * wet) * (f.burning ? 0.95 : 1); out.roll = P.roll; out.bs = P.bs;
+-    out.road = o.road; out.water = o.h < W.WATER ? W.WATER - o.h : 0; out.height = o.deck > o.h ? o.deck : o.h; out.normal = [nv[0], nv[1], nv[2]];
++    out.road = tin ? 1 : o.road; out.water = !tin && o.h < W.WATER ? W.WATER - o.h : 0; out.height = tin ? tfl : o.deck > o.h ? o.deck : o.h; out.normal = [nv[0], nv[1], nv[2]];
      out.burning = f.burning; out.burnt = f.burnt; out.rain = weather.rainAt(x, z); out.weights = { grassland: o.bg, savanna: o.bs, forest: o.bf };
      return out;
    }
@@ -131,9 +231,109 @@ diff -ruN a/js/terrain/index.js b/js/terrain/index.js
    const fire = createFire({ fuelAt, heightAt, rainAt: weather.rainAt, wetAt: weather.wetAt, wind: weather.wind, trees, emit });
    // ---- engine heat ignition + physics tree events ----
    function engineHot(d = {}) { const p = d.position || d; const k = Math.max(0, Math.min(1, d.intensity ?? 0.5)); if (Math.random() < k * 0.3) return fire.ignite(p.x, p.z, { radius: 1, cause: 'engine:hot' }); return 0; }
+@@ -88,7 +90,7 @@
+     return null;
+   }
+   return {
+-    heightAt, normalAt, surfaceAt, fuelAt, dryness: (x, z) => drynessOf(W.sample(x, z, SO), x, z, weather.wetAt(x, z)),
++    heightAt, normalAt, surfaceAt, fuelAt, groundAt: W.groundRef, roadGroundAt: W.roadGround, setRef: W.setRef, tunnelAt, dryness: (x, z) => drynessOf(W.sample(x, z, SO), x, z, weather.wetAt(x, z)),
+     biomeAt: (x, z) => W.BIOME_NAMES[W.biomeOf(W.sample(x, z, SO))], findBiome,
+     queryTrees: trees.queryTrees, damageTree: trees.damageTree, removeTree: trees.removeTree, setTreeHP: trees.setTreeHP, getTree: trees.getTree, igniteTree: trees.igniteTree, resetTrees: trees.reset,
+     ignite: (x, z, o) => fire.ignite(x, z, o), fireAt: fire.stateAt, burningCells: fire.burningCells, extinguishAll: fire.extinguishAll, clearBurnt: fire.clearBurnt,
+diff -ruN a/js/terrain/roads.js b/js/terrain/roads.js
+--- a/js/terrain/roads.js	2026-10-30 04:22:14.000000000 +0100
++++ b/js/terrain/roads.js	2026-11-02 18:37:25.687013570 +0100
+@@ -1,7 +1,7 @@
+ // Road meshes: ribbons generated along the same math paths used by world.height() (road graph edges + race loops).
+ // Asphalt highways get edge lines + dashed centre line, dirt trails/loops get wheel ruts; bridges get a deck slab, rails and pillars.
+ import * as THREE from 'three';
+-import { pathsNear, pathPoint, PP, HWY, LOOP, WATER } from './world.js';
++import { pathsNear, pathPoint, PP, HWY, LOOP, WATER, TUN_H, TUN_W } from './world.js';
+ import { asphaltHD, dirtHD } from './roadhd.js';
+ 
+ function canvasTex(draw) {
+@@ -25,17 +25,17 @@
+     g.fillStyle = 'rgba(120,150,70,0.35)'; g.fillRect(29, 0, 6, 256); // centre grass strip
+   });
+   // asphalt sits higher and gets a stronger depth offset than dirt, so trails never draw over the highway at crossings
+-  const matA = mk('asphalt', asphaltTex), matD = mk('dirt', dirtTex), matB = mk('bridge', null);
+-  const meshes = [new THREE.Mesh(new THREE.BufferGeometry(), matA), new THREE.Mesh(new THREE.BufferGeometry(), matD), new THREE.Mesh(new THREE.BufferGeometry(), matB)];
++  const matA = mk('asphalt', asphaltTex), matD = mk('dirt', dirtTex), matB = mk('bridge', null), matT = mk('tunnel', null);
++  const meshes = [new THREE.Mesh(new THREE.BufferGeometry(), matA), new THREE.Mesh(new THREE.BufferGeometry(), matD), new THREE.Mesh(new THREE.BufferGeometry(), matB), new THREE.Mesh(new THREE.BufferGeometry(), matT)];
+   meshes.forEach(m => { m.frustumCulled = false; scene.add(m); });
+   meshes[1].renderOrder = 1; meshes[0].renderOrder = 2; // trails first, asphalt last (wins ties at crossings)
+   let lx = 1e9, lz = 1e9; const RAD = 650, STEP = 5;
+   function build(px, pz) {
+-    const buf = [{ p: [], uv: [], idx: [] }, { p: [], uv: [], idx: [] }, { p: [], n: [], idx: [] }];
++    const buf = [{ p: [], uv: [], idx: [] }, { p: [], uv: [], idx: [] }, { p: [], n: [], idx: [] }, { p: [], c: [], idx: [] }];
+     const paths = pathsNear(px, pz, RAD);
+     for (const e of paths) {
+       const len = e.len, n = Math.ceil(len / STEP), b = buf[e.type === HWY ? 0 : 1], hw = e.hw;
+-      let run = -1, vlen = 0, prev = null;
++      let run = -1, vlen = 0, prev = null, tprev = null;
+       for (let i = 0; i <= n; i++) {
+         const t = i / n; pathPoint(e, t);
+         const dx = PP.x - px, dz = PP.z - pz, inside = dx * dx + dz * dz < RAD * RAD;
+@@ -49,7 +49,13 @@
+         if (run >= 0) b.idx.push(base - 2, base, base - 1, base - 1, base, base + 1);
+         run = base;
+         if (PP.bridge) addBridge(buf[2], e, t, len / n, hw, nx, nz, PP.x, PP.y, PP.z, i);
++        if ((PP.tun > 0) !== !!tprev && e.tn) { // tube enters/leaves between the previous and this station: put a ring exactly at the portal
++          const s1 = t * len, s0 = s1 - len / n, tt = e.tn.find(q => (q.s0 > s0 - 1e-6 && q.s0 <= s1) || (q.s1 >= s0 && q.s1 < s1 + 1e-6));
++          if (tt) { const sP = tt.s0 > s0 - 1e-6 && tt.s0 <= s1 ? tt.s0 : tt.s1; pathPoint(e, sP / len); PP.tun = Math.max(PP.tun, 0.01); tprev = addTube(buf[3], e, hw, -PP.tz, PP.tx, tprev, vlen); pathPoint(e, t); if (!(PP.tun > 0)) tprev = null; }
++        }
++        if (PP.tun > 0) tprev = addTube(buf[3], e, hw, nx, nz, tprev, vlen); else tprev = null;
+       }
++      if (e.tn) for (const tt of e.tn) for (const sP of [tt.s0, tt.s1]) if (sP >= 0 && sP <= len) { pathPoint(e, sP / len); if ((PP.x - px) ** 2 + (PP.z - pz) ** 2 < RAD * RAD) addPortal(buf[3], e, sP); }
+     }
+     for (let k = 0; k < 2; k++) {
+       const g = new THREE.BufferGeometry(), b = buf[k];
+@@ -60,6 +66,9 @@
+     let g = new THREE.BufferGeometry(); const b = buf[2];
+     g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setIndex(b.idx); g = g.toNonIndexed(); g.computeVertexNormals(); // flat-shaded boxes for crisp ink edges
+     meshes[2].geometry.dispose(); meshes[2].geometry = g;
++    g = new THREE.BufferGeometry(); const bt = buf[3];
++    g.setAttribute('position', new THREE.Float32BufferAttribute(bt.p, 3)); g.setAttribute('tc', new THREE.Float32BufferAttribute(bt.c, 4)); g.setIndex(bt.idx); g = g.toNonIndexed(); g.computeVertexNormals();
++    meshes[3].geometry.dispose(); meshes[3].geometry = g;
+   }
+   // bridge pieces: slab under the deck, side rails, a pillar every ~25 m
+   function box(b, cx, cy, cz, ax, az, hx, hy, hz) { // oriented box: (ax,az) = forward dir
+@@ -68,6 +77,32 @@
+     const F = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+     for (const f of F) b.idx.push(base + f[0], base + f[1], base + f[2], base + f[0], base + f[2], base + f[3]);
+   }
++  // HILLS: tunnel tube (one merged mesh): chamfered box section, darker towards the middle, a yellow light strip every ~20 m,
++  // concrete portal headwalls (hide the terrain seam at the mouth). Returns the ring for the next station.
++  const TUBE = (W, H) => [[W, -1.2], [W, H - 1.6], [W - 1.6, H], [1.6 - W, H], [-W, H - 1.6], [-W, -1.2]];
++  function quad(b, a, c, d, f, col, em) { const base = b.p.length / 3; b.p.push(...a, ...c, ...d, ...f); for (let k = 0; k < 4; k++) b.c.push(col[0], col[1], col[2], em); b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3); }
++  function addTube(b, e, hw, nx, nz, prev, vlen) {
++    const H = TUN_H[e.type], W = hw + TUN_W - 0.2, y = PP.y, dk = 1 - 0.45 * Math.min(1, PP.tun / 30);
++    const ring = TUBE(W, H).map(([l, v]) => [PP.x + nx * l, y + v, PP.z + nz * l]);
++    const col = [0.56 * dk, 0.54 * dk, 0.5 * dk], roof = [0.36 * dk, 0.35 * dk, 0.34 * dk];
++    if (prev) {
++      for (let k = 0; k < 5; k++) quad(b, prev.ring[k], ring[k], ring[k + 1], prev.ring[k + 1], k === 2 ? roof : col, 0);
++      if (fl(vlen / 20) !== fl(prev.vlen / 20)) { // light strip under the roof
++        const fx = PP.tx * 1.6, fz = PP.tz * 1.6, w = 0.35, yy = y + H - 0.08;
++        quad(b, [PP.x + nx * w - fx, yy, PP.z + nz * w - fz], [PP.x + nx * w + fx, yy, PP.z + nz * w + fz], [PP.x - nx * w + fx, yy, PP.z - nz * w + fz], [PP.x - nx * w - fx, yy, PP.z - nz * w - fz], [1, 0.86, 0.45], 1);
++      }
++    }
++    return { ring, vlen };
++  }
++  function addPortal(b, e, sP) { // concrete headwall + hazard stripe at a tunnel mouth
++    pathPoint(e, sP / e.len); const nx = -PP.tz, nz = PP.tx, H = TUN_H[e.type], W = e.hw + TUN_W - 0.2, y = PP.y;
++      const box2 = (l0, l1, v0, v1, col, th = 0.6) => { const P = (l, v, f) => [PP.x + nx * l + PP.tx * f, y + v, PP.z + nz * l + PP.tz * f];
++        quad(b, P(l0, v0, -th), P(l1, v0, -th), P(l1, v1, -th), P(l0, v1, -th), col, 0); quad(b, P(l0, v0, th), P(l0, v1, th), P(l1, v1, th), P(l1, v0, th), col, 0);
++        quad(b, P(l0, v1, -th), P(l1, v1, -th), P(l1, v1, th), P(l0, v1, th), col, 0); quad(b, P(l0, v0, -th), P(l0, v1, -th), P(l0, v1, th), P(l0, v0, th), col, 0); quad(b, P(l1, v0, -th), P(l1, v1, -th), P(l1, v1, th), P(l1, v0, th), col, 0); };
++      const cc = [0.78, 0.74, 0.66], st = [0.95, 0.72, 0.15];
++      box2(W, W + 4.5, -3, H + 2.2, cc); box2(-W - 4.5, -W, -3, H + 2.2, cc); box2(-W, W, H, H + 2.2, cc); box2(-W - 0.02, W + 0.02, H - 0.05, H + 0.7, st, 0.68);
++      }
++  const fl = Math.floor;
+   function addBridge(b, e, t, ds, hw, nx, nz, x, y, z, i) {
+     const ax = nz, az = -nx; // forward = tangent
+     box(b, x, y - 0.6, z, PP.tx, PP.tz, hw + 0.6, 0.55, ds * 0.5 + 0.05);
 diff -ruN a/js/terrain/trees.js b/js/terrain/trees.js
 --- a/js/terrain/trees.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/trees.js	2026-11-01 19:43:40.080201605 +0100
++++ b/js/terrain/trees.js	2026-11-02 18:37:25.687013570 +0100
 @@ -9,6 +9,14 @@
  export const SPECIES = ['conifer', 'broadleaf', 'acacia', 'scrub', 'cactus', 'dead'];
  const SP = { CONIFER: 0, BROAD: 1, ACACIA: 2, SCRUB: 3, CACTUS: 4, DEAD: 5 };
@@ -219,7 +419,13 @@ diff -ruN a/js/terrain/trees.js b/js/terrain/trees.js
      gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.);
    }`;
  
-@@ -157,14 +188,33 @@
+@@ -152,19 +183,38 @@
+       else if (r < pF + pA) sp = SP.CONIFER; else if (r < pF + pA + pAc) sp = SP.ACACIA; else if (r < pF + pA + pAc + pS) sp = SP.SCRUB; else if (r < tot - pC) sp = SP.BROAD; else sp = SP.CACTUS;
+       const x = (ci + 0.12 + 0.76 * hash2(ci, cj, 52)) * TC, z = (cj + 0.12 + 0.76 * hash2(ci, cj, 54)) * TC;
+       const o = sample(x, z, SOt);
+-      const ok = o.h > WATER + 1.0 && o.road < 0.02 && o.rd > 3 && o.riv > 3 && !(o.dom === REG.ALPINE && o.h > snowLine(x, z) - 10) && !(o.dom === REG.CANYON);
++      const ok = o.h > WATER + 1.0 && o.road < 0.02 && o.rd > 3 && o.tun < -1e8 && o.riv > 3 && !(o.dom === REG.ALPINE && o.h > snowLine(x, z) - 10) && !(o.dom === REG.CANYON);
+       if (ok) {
          const s = sp === SP.SCRUB ? 0.8 + 0.7 * hash2(ci, cj, 55) : sp === SP.ACACIA ? 0.85 + 0.45 * hash2(ci, cj, 55) : 0.75 + 0.6 * hash2(ci, cj, 55);
          const v = 0.85 + 0.3 * hash2(ci, cj, 56), dry = sp === SP.SCRUB || sp === SP.ACACIA ? 1 : 0;
          t = { id, x, z, y: o.h - 0.15, sp, s, rot: hash2(ci, cj, 57) * 6.283, tint: [v * (1 + 0.15 * dry * (hash2(ci, cj, 58) - 0.3)), v, v * (0.9 + 0.2 * hash2(ci, cj, 59))], lean: hash2(ci, cj, 60) * 6.283 };
@@ -295,7 +501,7 @@ diff -ruN a/js/terrain/trees.js b/js/terrain/trees.js
      stats: () => ({ near: nearCount, impostors: impCount, cached: cells.size, removed: removed.size, burning: burning.size, damaged: hp.size }),
 diff -ruN a/js/terrain/weather.js b/js/terrain/weather.js
 --- a/js/terrain/weather.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/weather.js	2026-11-01 19:43:40.080201605 +0100
++++ b/js/terrain/weather.js	2026-11-02 18:37:25.687013570 +0100
 @@ -11,7 +11,7 @@
  const CN = 64, CSZ = 4096, WN = 48, WS = 40, LAT = 100, CR = 1450;
  const C_DAY_H = new THREE.Color(0xd9f1ff), C_DAY_Z = new THREE.Color(0x1f74e0), C_DUSK_H = new THREE.Color(0xffad6e), C_DUSK_Z = new THREE.Color(0x4f4aa8),
@@ -343,7 +549,7 @@ diff -ruN a/js/terrain/weather.js b/js/terrain/weather.js
      const R = st.localRain, Cv = st.localCov; tmpC.copy(C_RAIN).multiply(L);
 diff -ruN a/js/terrain/world.js b/js/terrain/world.js
 --- a/js/terrain/world.js	2026-10-30 04:22:14.000000000 +0100
-+++ b/js/terrain/world.js	2026-11-01 19:43:40.080201605 +0100
++++ b/js/terrain/world.js	2026-11-02 18:37:25.687013570 +0100
 @@ -136,7 +136,10 @@
    if (!n) {
      const x = (i + 0.5 + 0.55 * (hash(i, j, 11) - 0.5)) * RG, z = (j + 0.5 + 0.55 * (hash(i, j, 12) - 0.5)) * RG;
@@ -366,7 +572,8 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
    edges.set(key, e); return e;
  }
  // path point: t in [0,1]; fills PP {x,z,tx,tz,y,curv,bridge}
- const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0 };
+-const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0 };
++const PP = { x: 0, z: 0, tx: 0, tz: 0, y: 0, curv: 0, bridge: 0, tun: 0 }; // tun: metres inside a tunnel (0 = open road)
  function pathPoint(e, t, wantY = true) {
 +  if (wantY && !e.pinned) buildProfile(e); // lazy build first: it reuses PP
    if (e.loop) {
@@ -378,7 +585,7 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
    }
 -  if (wantY) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.y = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; PP.bridge = e.br[u < 0.5 ? i : i + 1]; }
 +  if (wantY) { const f = clamp(t, 0, 1) * e.M, i = mn(e.M - 1, fl(f)), u = f - i; PP.y = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u; PP.bridge = e.br[u < 0.5 ? i : i + 1];
-+    if (e.pins) PP.y += pinAt(e, t); }
++    if (e.pins) PP.y += pinAt(e, t); PP.tun = e.tn ? tunAt(e, clamp(t, 0, 1) * e.len) : 0; }
    return PP;
  }
 -function buildProfile(e) {
@@ -389,7 +596,7 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
    const len = e.loop ? 6.283 * e.trk.R * 1.1 : e.L, M = e.M = mx(8, Math.ceil(len / 30)), ds = len / M;
    const p = new Float32Array(M + 1), wet = new Uint8Array(M + 1);
    for (let i = 0; i <= M; i++) { pathPoint(e, i / M, false); p[i] = natural(PP.x, PP.z); wet[i] = p[i] < WATER + 0.6 ? 1 : 0; }
-@@ -195,6 +203,10 @@
+@@ -195,6 +203,11 @@
    const g = (e.type === HWY ? 0.09 : 0.15) * ds;
    for (let i = 1; i <= M; i++) p[i] = clamp(p[i], p[i - 1] - g, p[i - 1] + g);
    for (let i = M - 1; i >= 0; i--) p[i] = clamp(p[i], p[i + 1] - g, p[i + 1] + g);
@@ -397,13 +604,80 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
 +  // could not reach the node within the grade limit) -> spread the residual linearly so every edge meets its nodes exactly
 +  if (e.loop) { const err = p[M] - p[0]; for (let i = 0; i <= M; i++) p[i] -= err * i / M; } // closed seam (the grade passes could leave a step at t=0/1)
 +  if (!e.loop) { const e0 = p[0] - e.a.h, e1 = p[M] - e.b.h; for (let i = 0; i <= M; i++) p[i] -= e0 * (1 - i / M) + e1 * (i / M); }
++  hills(e, p, wet, M, ds);
    // bridges over short wet runs (rivers); long wet runs become causeways
    const br = new Uint8Array(M + 1);
    if (!e.loop) for (let i = 0; i <= M;) {
-@@ -204,6 +216,57 @@
+@@ -204,6 +217,123 @@
    }
    e.prof = p; e.br = br; e.ds = ds; e.len = len;
  }
++// ---------------- HILLS (local): no canyon cuts. The smoothed/grade-clamped profile used to slice up to ~40 m deep through ridges,
++// so big hills read as walled roads. Cuts are capped at CUT_MAX and fills at FILL_MAX (vs. lightly smoothed natural ground);
++// a deeper cut run is either re-graded OVER THE TOP (raise-only envelope, grade <= 12% hwy / 15% trail+loop) or, when it is long
++// and deep (or going over would need a big fill), becomes a TUNNEL: the road keeps its level profile, the hill stays intact above it.
++// Deterministic per seed (pure function of the edge). Tunnels: e.tn = [{s0, s1}] in metres along the edge (portal to portal).
++export const CUT_MAX = 6.5, FILL_MAX = 12, OT_GRADE = { [HWY]: 0.12, [TRAIL]: 0.15, [LOOP]: 0.15 }, TUN_LEN = 60, TUN_CUT = 18, TUN_FILL = 10, TUN_END = 45, TUN_MIN = 50, TUN_GAP = 70, TUN_W = 2.6; // TUN_W: tube half width beyond the road edge (walls)
++export const TUN_H = { [HWY]: 7.5, [TRAIL]: 6, [LOOP]: 7.5 }; // tunnel clear height above the road
++function envelope(v, M, loop, g, up) { // v[i] = max_j(v[j] - g|i-j|) (up) / min_j(v[j] + g|i-j|) (down), circular on loops
++  const n = loop ? M : M + 1, R = loop ? 2 : 1;
++  for (let k = 1; k < n * R; k++) { const i = k % n, j = (k - 1) % n; v[i] = up ? mx(v[i], v[j] - g) : mn(v[i], v[j] + g); }
++  for (let k = n * R - 2; k >= 0; k--) { const i = k % n, j = (k + 1) % n; v[i] = up ? mx(v[i], v[j] - g) : mn(v[i], v[j] + g); }
++  if (loop) v[M] = v[0];
++}
++function hills(e, p, wet, M, ds) {
++  const loop = !!e.loop, n = loop ? M : M + 1, at = i => loop ? pmod(i, M) : i;
++  // natural ground per station: highest (cuts) / lowest (fills) of 7 samples across the station's 30 m slice -> narrow ridges between stations count
++  const ns = new Float32Array(M + 1), nl = new Float32Array(M + 1), q = new Float32Array(M + 1);
++  for (let i = 0; i <= M; i++) { let hi = -1e9, lo = 1e9; for (let k = -3; k <= 3; k++) { const t = (i + k / 7) / M; if (t < 0 || t > 1) continue; pathPoint(e, loop ? t - fl(t) : t, false); const h = natural(PP.x, PP.z); hi = mx(hi, h); lo = mn(lo, h); } ns[i] = hi; nl[i] = lo; }
++  const wn = new Uint8Array(M + 1); for (let i = 0; i <= M; i++) if (wet[i]) for (let k = -2; k <= 2; k++) { const j = at(i + k); if (j >= 0 && j <= M) wn[j] = 1; }
++  const G = OT_GRADE[e.type] * ds, pin = new Uint8Array(M + 1), cone = new Float32Array(M + 1);
++  if (!loop) pin[0] = pin[M] = 1; // junction nodes keep their exact height
++  const reach = (up) => { // cone of heights reachable from the pinned stations at grade G (up: lowest allowed top / down: highest allowed bottom)
++    for (let i = 0; i <= M; i++) cone[i] = pin[i] ? p[i] : up ? 1e9 : -1e9; envelope(cone, M, loop, G, !up); return cone; };
++  // 1. fill cap (embankments): lower-only envelope from natural + FILL_MAX; bridges / wet stations keep their height
++  const ub = new Float32Array(M + 1); for (let i = 0; i <= M; i++) ub[i] = wn[i] ? 1e9 : nl[i] + FILL_MAX;
++  envelope(ub, M, loop, G, false); reach(false); for (let i = 0; i <= M; i++) if (!pin[i]) p[i] = mn(p[i], mx(ub[i], cone[i]));
++  // 2. cut runs deeper than CUT_MAX
++  const cut = i => !wet[i] && ns[i] - p[i] > CUT_MAX; let k0 = 0;
++  if (loop) { while (k0 < M && cut(k0)) k0++; if (k0 >= M) return; }
++  const runs = []; let r = null;
++  for (let k = 0; k <= n; k++) { const i = at(k0 + k); if (k < n && cut(i)) { if (!r) r = { a: k0 + k, b: k0 + k, mc: 0 }; r.b = k0 + k; r.mc = mx(r.mc, ns[i] - p[i]); } else if (r) { runs.push(r); r = null; } }
++  const lb = new Float32Array(M + 1), tn = [];
++  for (const r of runs) {
++    // over-the-top candidate: how high would the re-graded road float over the ground around this run?
++    lb.fill(-1e9); for (let k = r.a; k <= r.b; k++) lb[at(k)] = ns[at(k)] - CUT_MAX + 0.5; envelope(lb, M, loop, G, true);
++    let fo = 0; for (let i = 0; i <= M; i++) if (lb[i] > p[i] && !wn[i]) fo = mx(fo, lb[i] - nl[i]);
++    if (!loop) { const ke = Math.ceil(TUN_END / ds); r.ta = mx(r.a, ke); r.tb = mn(r.b, M - ke); } else { r.ta = r.a; r.tb = r.b; } // portals stay clear of junctions
++    const L = (r.tb - r.ta + 1) * ds;
++    r.tun = r.tb >= r.ta && ((L >= TUN_LEN && r.mc > TUN_CUT) || fo > TUN_FILL);
++    if (r.tun) { const ra = r.a, rb = r.b; r.a = r.ta; r.b = r.tb; // portals where the cut crosses CUT_MAX (interpolated between stations)
++      const cA = ns[at(r.a - 1)] - p[at(r.a - 1)], cB = ns[at(r.a)] - p[at(r.a)], cC = ns[at(r.b)] - p[at(r.b)], cD = ns[at(r.b + 1)] - p[at(r.b + 1)];
++      const s0 = (r.a - 1 + clamp((CUT_MAX - cA) / mx(1e-3, cB - cA), 0, 1)) * ds, s1 = (r.b + clamp((cC - CUT_MAX) / mx(1e-3, cC - cD), 0, 1)) * ds;
++      const ex = mx(0, TUN_MIN - (s1 - s0)) / 2; tn.push({ s0: s0 - ex, s1: s1 + ex }); for (let k = r.a - 1 - Math.ceil(ex / ds); k <= r.b + 1 + Math.ceil(ex / ds); k++) pin[at(k)] = 1; // tunnel floor keeps its level profile
++      r.a = ra; r.b = rb; r.tA = r.ta - 1 - Math.ceil(ex / ds); r.tB = r.tb + 1 + Math.ceil(ex / ds);
++    }
++  }
++  const dry = (a, b) => { for (let j = fl(a / ds); j <= Math.ceil(b / ds); j++) if (wet[at(j)]) return false; return true; };
++  for (let k = 1; k < tn.length; k++) if (tn[k].s0 - tn[k - 1].s1 < TUN_GAP && dry(tn[k - 1].s1, tn[k].s0)) { // short daylight gaps between bores -> one tunnel
++    for (let j = fl(tn[k - 1].s1 / ds); j <= Math.ceil(tn[k].s0 / ds); j++) pin[at(j)] = 1; tn[k - 1].s1 = tn[k].s1; tn.splice(k--, 1); }
++  for (let k = 0; k < tn.length; k++) { const t = tn[k], mid = (t.s0 + t.s1) / 2; // never overlap a bridge (wet station): bridges stay bridges
++    for (let j = Math.ceil(t.s0 / ds) - 1; j <= fl(t.s1 / ds) + 1; j++) if (wet[at(j - 1)] || wet[at(j)] || wet[at(j + 1)]) { if (j * ds < mid) t.s0 = mx(t.s0, (j + 0.6) * ds); else t.s1 = mn(t.s1, (j - 0.6) * ds); }
++    if (t.s1 - t.s0 < 20) tn.splice(k--, 1); }
++  // 3. over the top: raise-only envelope from (natural - CUT_MAX) over the remaining cut stations, limited to what the pinned stations
++  // (junction nodes, tunnel floors) can reach at the grade cap; crests rounded once, then a final exact pass
++  const p0 = Float32Array.from(p);
++  for (let pass = 0; pass < 2; pass++) {
++    lb.fill(-1e9); let any = false; for (let i = 0; i <= M; i++) if (!pin[i] && !wet[i] && ns[i] - p[i] > CUT_MAX - 0.3) { lb[i] = ns[i] - CUT_MAX + (pass ? 0.1 : 0.8); any = true; }
++    if (!any) break;
++    envelope(lb, M, loop, G, true); reach(true); for (let i = 0; i <= M; i++) if (!pin[i]) p[i] = mx(p[i], mn(lb[i], cone[i]));
++    if (!pass) for (let r = 0; r < 2; r++) { for (let i = 0; i <= M; i++) q[i] = pin[i] || (!loop && (i === 0 || i === M)) ? p[i] : 0.25 * p[at(i - 1)] + 0.5 * p[i] + 0.25 * p[at(i + 1)]; p.set(q); if (loop) p[M] = p[0]; }
++  }
++  e.otg = 0; for (let i = 0; i < M; i++) if (p[i] - p0[i] > 0.05 && p[i + 1] - p0[i + 1] > 0.05) e.otg = mx(e.otg, A(p[i + 1] - p[i]) / ds); // over-top grade (tests)
++  if (tn.length) { const L = loop ? M * ds : 0; e.tn = loop ? tn.flatMap(t => [t, { s0: t.s0 - L, s1: t.s1 - L }, { s0: t.s0 + L, s1: t.s1 + L }]) : tn; }
++}
++// tunnel at arc length s: 0 = open road, else distance (m) inside from the nearest portal
++function tunAt(e, s) { const T = e.tn; if (!T) return 0; for (const t of T) if (s > t.s0 && s < t.s1) return mn(s - t.s0, t.s1 - s); return 0; }
 +// ROADS OVER TERRAIN (local): level crossings. Where two roads overlap, the lower-priority one (trail < loop < highway, then id) gets a smooth
 +// additive bump (plateau over the overlap, ramps at <= ~7% extra grade) so its centre-line meets the other road's surface: no road is buried
 +// in the other's embankment or left floating over its cutting. Priority is a strict order, so lazy profile builds never recurse in a cycle.
@@ -442,11 +716,11 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
 +    let tgt = null, bd = 1e9;
 +    for (const r of pathsNear(b.x, b.z, 60)) { if (r === e || !above(r, e) || !pathDist(r, b.x, b.z)) continue; if (PD.d < bd) { bd = PD.d; tgt = { r, t: PD.t, s: PD.s }; } }
 +    if (!tgt) continue;
-+    pathPoint(tgt.r, tgt.t); if (PP.bridge) continue;
++    pathPoint(tgt.r, tgt.t); if (PP.bridge || PP.tun) continue; // HILLS: no level crossing with a road inside its tunnel (it passes under)
 +    const bank = tgt.r.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07), ho = PP.y + clamp(tgt.s, -tgt.r.hw, tgt.r.hw) * bank;
 +    const sn = A(b.tx * PP.tz - b.tz * PP.tx), cs = A(b.tx * PP.tx + b.tz * PP.tz);
 +    const f = b.t * e.M, i = mn(e.M - 1, fl(f)), u = f - i, he = e.prof[i] + (e.prof[i + 1] - e.prof[i]) * u;
-+    if (e.br[u < 0.5 ? i : i + 1]) continue;
++    if (e.br[u < 0.5 ? i : i + 1] || (e.tn && tunAt(e, b.t * len))) continue;
 +    const d = ho - he; if (A(d) < 0.03) continue;
 +    out.push({ t: b.t, d, P: mn(45, (tgt.r.hw + e.hw * cs + 2) / mx(0.3, sn)), R: mx(30, 1.5 * A(d) / 0.08) });
 +  }
@@ -458,7 +732,7 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
  // ---------------- race loops: one closed polar sine curve per 3 km lattice cell (kept from v1) ----------------
  const CELL = 3000;
  export function trackOf(ci, cj) {
-@@ -217,7 +280,7 @@
+@@ -217,7 +347,7 @@
  export function nearTrack(x, z) {
    const ci = fl(x / CELL), cj = fl(z / CELL), key = ci * 100000 + cj;
    let t = tcache.get(key);
@@ -467,7 +741,7 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
    return t;
  }
  // candidate edges per road cell (cached)
-@@ -238,7 +301,8 @@
+@@ -238,7 +368,8 @@
  function pathDist(e, x, z) { // loops: radial offset scaled to the perpendicular distance, so the drivable width matches the mesh ribbon
    if (e.loop) {
      const T = e.trk, dx = x - T.cx, dz = z - T.cz, th = Math.atan2(dz, dx), r = trackR(T, th), rr = Math.hypot(dx, dz);
@@ -477,7 +751,7 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
    }
    const rx = x - e.ax, rz = z - e.az, proj = rx * e.dx + rz * e.dz, perp = rx * e.nx + rz * e.nz;
    if (proj < -REACH || proj > e.L + REACH || A(perp) > A(e.amp) + REACH) return false;
-@@ -246,10 +310,26 @@
+@@ -246,10 +377,26 @@
    let o = e.amp * S(w * t); const o1 = e.amp * w * C(w * t) / e.L;
    t = clamp(t + (perp - o) * o1 / (1 + o1 * o1) / e.L, 0, 1); // one Newton step along the tangent
    o = e.amp * S(w * t); const ax = proj - t * e.L, ap = perp - o;
@@ -502,23 +776,29 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
  }
  // ---------------- full sample: natural terrain + road beds/banking + bridge decks ----------------
 -export const OUT = { h: 0, hn: 0, deck: -1e9, road: 0, rtype: 0, dom: 0, riv: 1e9, rd: 1e9, bg: 0, bs: 0, bf: 0 };
-+export const OUT = { h: 0, hn: 0, deck: -1e9, road: 0, rtype: 0, dom: 0, riv: 1e9, rd: 1e9, bg: 0, bs: 0, bf: 0, rb: 0, rdd: 1e9 };
++export const OUT = { h: 0, hn: 0, deck: -1e9, road: 0, rtype: 0, dom: 0, riv: 1e9, rd: 1e9, bg: 0, bs: 0, bf: 0, rb: 0, rdd: 1e9, tun: -1e9, ttype: 0, ts: 0, thw: 0, tdep: 0, tnx: 0, tnz: 0, tH: 0 };
  // ---- biome layer (terrain module): pure sine fields over the region selector -> dry grassland / savanna / forest weights ----
  export const BIOME = { GRASSLAND: 0, SAVANNA: 1, FOREST: 2, DESERT: 3, CANYON: 4, ALPINE: 5 };
  export const BIOME_NAMES = ['grassland', 'savanna', 'forest', 'desert', 'canyon', 'alpine'];
-@@ -271,7 +351,7 @@
+@@ -271,7 +418,7 @@
  }
  const CORE = 1.5;
  export function sample(x, z, o = OUT) {
 -  const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn;
-+  const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn, rdd = 1e9, rb = 0;
++  const hn = natural(x, z); biomeFromRW(x, z); o.bg = BW[0]; o.bs = BW[1]; o.bf = BW[2]; let h = hn, deck = -1e9, rw = 0, rtype = 0, rdmin = 1e9, bestW = 0, bestH = hn, rdd = 1e9, rb = 0, tun = -1e9, tsd = 1e9, cover = -1e9;
    const list = cellEdges(fl(x / RG), fl(z / RG));
    const tk = nearTrack(x, z);
    for (let n = -1; n < list.length; n++) {
-@@ -281,18 +361,20 @@
+@@ -281,22 +428,39 @@
      pathPoint(e, PD.t);
      const bank = e.loop ? 0 : clamp(-PP.curv * 45, -0.07, 0.07);
      const hb = PP.y + clamp(PD.s, -e.hw, e.hw) * bank;
++    if (PP.tun > 0) { // HILLS: tunnel bore -> no bed carve / road flag; the hill is kept (and topped up) over the tube
++      const F = e.hw + TUN_W, cov = PP.y + TUN_H[e.type] + 1.8;
++      if (d < F && (tun < -1e8 || d < tsd)) { tun = hb; tsd = d; o.ttype = e.type; o.ts = PD.s; o.thw = e.hw; o.tdep = PP.tun; o.tnx = -PP.tz; o.tnz = PP.tx; o.tH = TUN_H[e.type]; }
++      if (cov > hn && d < F + 12) cover = mx(cover, d < F + 1.5 ? cov : hn + (cov - hn) * sst(F + 12, F + 1.5, d));
++      continue;
++    }
 +    const span = PP.bridge && hn < hb; // ROADS OVER TERRAIN (local): a bridge station only floats over ground that is lower than its deck; at abutments/banks the bed is carved like any road
 +    if (!span && d - e.hw < rdd) { rdd = d - e.hw; rb = PP.y - A(e.hw * bank); } // lowest edge of the nearest bed (render grids keep under it)
      const core = e.hw + CORE, blend = mn(60, 8 + 1.3 * A(hn - hb));
@@ -532,10 +812,24 @@ diff -ruN a/js/terrain/world.js b/js/terrain/world.js
 +    if (w > bestW || (w === 1 && bestW === 1 && d < e.hw + 0.5 && hb > bestH)) { bestW = w; bestH = hb; }
    }
    if (bestW > 0) h = hn + (bestH - hn) * bestW;
++  if (cover > h) h = cover;
    if (AF.length) { AO.h = h; AO.road = rw; AO.rtype = rtype; AO.rd = rdmin; if (airMod(x, z, hn)) { h = AO.h; rw = AO.road; rtype = AO.rtype; rdmin = AO.rd; } }
    const edge = mx(A(x), A(z)) - WORLD; if (edge > 0) h += edge * 0.6; // world rim
 -  o.h = h; o.hn = hn; o.deck = deck; o.road = rw; o.rtype = rtype; o.dom = NAT.dom; o.riv = NAT.riv; o.rd = rdmin;
-+  o.h = h; o.hn = hn; o.deck = deck; o.road = rw; o.rtype = rtype; o.dom = NAT.dom; o.riv = NAT.riv; o.rd = rdmin; o.rb = rb; o.rdd = rdd;
++  o.h = h; o.hn = hn; o.deck = deck; o.road = rw; o.rtype = rtype; o.dom = NAT.dom; o.riv = NAT.riv; o.rd = rdmin; o.rb = rb; o.rdd = rdd; o.tun = tun;
    return o;
  }
  export function height(x, z) { return sample(x, z).h; }
+-export function ground(x, z) { sample(x, z); return OUT.deck > OUT.h ? OUT.deck : OUT.h; } // physics: includes bridge decks
++export function ground(x, z) { sample(x, z); return OUT.deck > OUT.h ? OUT.deck : OUT.h; } // includes bridge decks (scenery: the hill top over tunnels)
++// HILLS: tunnels make the ground two-layered. The game sets the reference height (vehicle / camera y) once per frame; a query inside a
++// tunnel footprint below the tube roof gets the tunnel floor, anything else the terrain (= ground()).
++let REFY = 1e9; export function setRef(y) { REFY = y; }
++export const inTunnel = o => o.tun > -1e8 && REFY < o.tun + o.tH + 1.5;
++export function groundRef(x, z) { sample(x, z); return inTunnel(OUT) ? OUT.tun : OUT.deck > OUT.h ? OUT.deck : OUT.h; }
++export function heightRef(x, z) { sample(x, z); return inTunnel(OUT) ? OUT.tun : OUT.h; }
++export function roadGround(x, z) { sample(x, z); return OUT.tun > -1e8 ? OUT.tun : OUT.deck > OUT.h ? OUT.deck : OUT.h; } // race props / pickups: on the road, in tunnels too
++export function tunnelsOf(e) { if (!e.prof) buildProfile(e); return e.tn ? e.tn.filter(t => t.s1 > 0 && t.s0 < e.len) : null; }
+ export function trackW(x, z) { // 1 on race loop, smooth falloff (kept for scenery/compat)
+   const t = nearTrack(x, z), hw = t.path.hw; pathDist(t.path, x, z); return PD.d < hw + 1 ? 1 : PD.d > hw + 14 ? 0 : sst(hw + 14, hw + 1, PD.d);
+ }

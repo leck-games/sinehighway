@@ -5,6 +5,17 @@ This is the first numbered release of Sine Rally. It is built on the finished [S
 - Release: git tag `v0.1`, plus a GitHub Release named "Sine Rally V0.1".
 - The version is set in `js/version.js`, which drives the page title and the menu tag. For a new release, bump it, update `index.html`/`manifest.webmanifest`, tag it, and add the build to the versions repo (see its README).
 
+## Hills: over the top or through tunnels (V0.2-dev, 2026-11-02)
+- Road cuts are capped at 6.5 m and fills at 12 m below/above the smoothed natural ground, so big hills no longer turn into walled canyons.
+- A deeper cut is re-graded **over the top**, with the grade capped at 12% on highways and 15% on trails and loops. A long, deep cut
+  (at least 60 m and more than 18 m deep), or one where going over would need more than 10 m of fill, becomes a **tunnel** instead.
+  The road stays level and the hill stays intact above it. Tunnels are at least 50 m long, stay 45 m clear of junctions, merge
+  across dry gaps under 70 m, and never overlap a bridge. The choice is deterministic per edge.
+- Each tunnel is a low-poly comic tube (one merged mesh) with portals, a hazard stripe and emissive light strips. The car drives on
+  the floor, collides with the walls at hw + 2.4 m, and the terrain is cut out at the mouths. There are no trees or rocks inside,
+  the camera stays under the roof, and tunnels show dashed on the minimap and map.
+- Checks: `tools/test-roads.cjs` (cut limit and over-top grade cap) and `tools/test-tunnel.cjs` (drive-through).
+
 ## Roads over terrain · throttle ramp · compact compass · tree variety (V0.2-dev, 2026-11-01)
 - **Roads win over terrain**: the ground is carved/flattened to every road (exact road-foot projection, crossing pins with a
   max-bed rule, bridge spans, junction/loop seam fixes, road-safe render grids), so terrain no longer pokes through roads and
