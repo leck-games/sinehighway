@@ -43,8 +43,17 @@ const path = require('path');
         if (topE === e && dz < -0.3) { float++; if (-dz > worst) { worst = -dz; at = [x | 0, z | 0, e.id, 'float']; } }
       } }
   }
+  // HILLS: cut limit (natural ground vs. road centre on open road; junction nodes / portals excluded), over-the-top grade cap, tunnels
+  const CAP = { [W.HWY]: 0.12, [W.TRAIL]: 0.15, [W.LOOP]: 0.15 }; let hn = 0, cut8 = 0, maxCut = 0, cutAt = null, otgBad = 0, otgMax = 0, tuns = 0;
+  for (const e of seen) { W.tunnelsOf(e); if (e.tn) tuns += e.tn.filter(t => t.s0 >= 0 && t.s1 <= e.len + 1).length;
+    if (e.otg > CAP[e.type] * 1.1) otgBad++; otgMax = Math.max(otgMax, e.otg / CAP[e.type]);
+    const m = Math.ceil(e.len / 10); for (let i = 0; i <= m; i++) { const s = i / m * e.len; if (!e.loop && (s < 50 || s > e.len - 50)) continue;
+      pathPoint(e, i / m); if (PP.bridge || PP.tun > 0 || nearPortal(e, s, 60) || Math.max(Math.abs(PP.x), Math.abs(PP.z)) > 9000) continue;
+      hn++; const c = W.naturalHeight(PP.x, PP.z) - PP.y; if (c > 8) cut8++; if (c > maxCut) { maxCut = c; cutAt = [PP.x | 0, PP.z | 0, e.id]; } } }
+  console.log(JSON.stringify({ hills: { stations: hn, cutOver8: cut8, maxCut: +maxCut.toFixed(2), cutAt, overTopGradeMaxOfCap: +otgMax.toFixed(3), overTopBad: otgBad, tunnels: tuns } }));
+  const hillsOk = cut8 / hn < 0.001 && maxCut < 12 && otgBad === 0 && tuns > 5;
   const pct = (100 * (poke + float) / n);
   console.log(JSON.stringify({ roads: seen.size, samples: n, poke, float, worst: +worst.toFixed(2), at, junctionSteps: ends, loopSeams: seams, badPct: +pct.toFixed(3), gridSamples: gn, gridPoke4: G[4], gridPoke16: G[16], gridWorst4: +GW[4].toFixed(2), gridWorst16: +GW[16].toFixed(2), GA }));
-  const ok = pct < 0.5 && ends === 0 && seams === 0 && (G[4] + G[16]) / gn < 0.005;
+  const ok = hillsOk && pct < 0.5 && ends === 0 && seams === 0 && (G[4] + G[16]) / gn < 0.005;
   console.log(ok ? 'ROADS OK' : 'ROADS FAIL'); process.exit(ok ? 0 : 1);
 })();
