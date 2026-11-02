@@ -5,6 +5,14 @@ This is the first numbered release of Sine Rally. It is built on the finished [S
 - Release: git tag `v0.1`, plus a GitHub Release named "Sine Rally V0.1".
 - The version is set in `js/version.js`, which drives the page title and the menu tag. For a new release, bump it, update `index.html`/`manifest.webmanifest`, tag it, and add the build to the versions repo (see its README).
 
+## RIM HIGHWAY (V0.2-dev, 2026-11-02)
+- One closed **ring highway** runs just inside the world edge: 68.7 km long, 32 m wide (2×2 lanes, centre line). The rim slope starts outside its shoulder.
+- It is **banked like a NASCAR oval**: the bank follows the curve radius (up to 25.5° on the tightest curve), with spiral ramps, and fades to flat at junctions,
+  bridges and tunnels. The banking is real geometry in both the road mesh and the physics, so a car can hold far more speed through the curves.
+- It uses the normal road system (cut caps, over-the-top grading, 31 tunnels, 22 bridges and viaducts, no trees or rocks on it) and links to the highway network at 13 junctions.
+- It shows gold on the minimap and world map, labelled "RIM HIGHWAY" on the world map. Meshes are built per chunk from only the nearby part of the ring.
+- Checks: `tools/test-roads.cjs` (ring geometry, bank, junctions) and `tools/test-rim.cjs` (drive, bank in physics, banked-vs-flat cornering speed).
+
 ## Hills: over the top or through tunnels (V0.2-dev, 2026-11-02)
 - Road cuts are capped at 6.5 m and fills at 12 m below/above the smoothed natural ground, so big hills no longer turn into walled canyons.
 - A deeper cut is re-graded **over the top**, with the grade capped at 12% on highways and 15% on trails and loops. A long, deep cut

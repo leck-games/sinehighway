@@ -69,6 +69,16 @@ At 0 HP the tree despawns and stays gone. Removed IDs are kept in a Set and pers
 - `sample(x,z).road` is 1 inside `hw + 0.5` and fades to 0 at `hw + 2.5`. `.rd` is the distance past the edge (negative on the road). `.rtype` is HWY=1, TRAIL=2 or LOOP=3.
 - Trees and bushes spawn only where `road < 0.02 && rd > 3`, game rocks only where `road < 0.05 && rd > 2.5`, and fire fuel needs `road <= 0.15`. Bridges set `deck` within `hw + 1.2`.
 
+## RIM HIGHWAY (ring road, local patch)
+- `RIM` is one closed path (`loop`, `rim: true`, rtype HWY) just inside the world edge: a smoothed superellipse (`RIM_A` 9380) that bends inward around
+  steep ground (`RIM_IN` limits it). Half-width `RIM_HW` = 16 (2×2 lanes). It uses the normal road system: cut caps, over-the-top grading, tunnels, bridges, road flag.
+- `PP.bank` (from `pathPoint`) is the cross slope: height at signed offset `s` is `PP.y + s * PP.bank` (+ = left-normal side (−tz, tx) up). It is 0 on all other roads.
+  On the ring it is NASCAR-style superelevation: `atan(v²κ/g)` for the design speed `RIM_V` (115 m/s), clamped to `RIM_BANK_MIN..RIM_BANK_MAX` degrees, with spiral
+  ramps, and it fades to 0 at junctions, bridges and tunnels. `sample().h` / `groundAt` follow the banked surface, so physics feels the bank.
+- `rimJunctions()` returns `[{t, i, j, x, z, h}]` where highways meet the ring (the joining edges get a flat landing that follows the ring surface).
+- `rimSpan(x, z, r)` returns the `[t0, t1]` window of the ring within about `r` of a point (null when the ring is not near). Meshes and maps walk only this window.
+- `setRimBankScale(k)` rebuilds the ring profile with the bank scaled by `k` (tests: 0 = flat ring).
+
 ## Misc
 - `uniforms` (shared `U`): shaders of other modules can read the same sun, fog, wetness and fire state.
 - `world` is the raw sine world. `stats()`, `save()` / `load(state)` and `dispose()` are also available, and `FIRE_CELL` = 3.
