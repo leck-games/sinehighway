@@ -5,8 +5,8 @@
 // Talks to the active sound plugin ONLY through the optional API-v1 extension methods documented in PLUGIN_API.md §1a:
 //   descriptor.configSchema, instance.setConfig(patch, {replace}), instance.getConfig(), instance.getVisualState() (optional).
 // If the active plugin lacks setConfig/getConfig/configSchema the EDIT toggle is simply not shown.
-// Storage (localStorage 'sinerally_sndcfg1'): { v: {[pluginId]: {[vehicleId]: config}}, named: {[name]: config} }
-const LS = 'sinerally_sndcfg1';
+// Storage (localStorage 'srroute_sndcfg1'): { v: {[pluginId]: {[vehicleId]: config}}, named: {[name]: config} }
+const LS = 'srroute_sndcfg1';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // optional plugin-specific diagram (drawn read-only from getConfig()/getVisualState(); falls back to the lights strip)

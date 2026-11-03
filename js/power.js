@@ -1,8 +1,8 @@
 // power.js — per-build engine POWER CURVE (VEHICLE → ⚙ ENGINE / POWER). Game-side only: it overrides the vendored
 // physics params of the current vehicle state (torque table, idle, redline, shift points) and never edits js/phys/.
 // Curve = 8 nodes (normalised torque 0.05..1) at evenly spaced rpm 0..redline; scaled so the PEAK POWER is exactly `hp`.
-// Stored per vehicle id in localStorage 'sinerally_power1' ({ [id]: { hp, idle, redline, nodes[8], preset, spool } }).
-const KEY = 'sinerally_power1';
+// Stored per vehicle id in localStorage 'srroute_power1' ({ [id]: { hp, idle, redline, nodes[8], preset, spool } }).
+const KEY = 'srroute_power1';
 export const N = 8, HP_MAX = 10000, HP_MIN = 20;
 export const RED_MIN = 2500, RED_MAX = 16000, IDLE_MIN = 400, IDLE_MAX = 2500;
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);

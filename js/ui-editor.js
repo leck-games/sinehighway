@@ -4,7 +4,7 @@
 // JSON export/import. Positions are stored against viewport anchors (left/centre/right × top/middle/bottom, inside the
 // safe area) so a layout survives rotation and size changes. Elements that were never moved keep their CSS position.
 export const LAYOUT_VERSION = 2; // v2 (redesign): the top bar + UI/ARC corner buttons became one ☰ ⚙ corner group; v1 layouts are migrated
-const KEY = 'srui_layout', SLOT = n => 'srui_slot_' + n;
+const KEY = 'srroute_layout', SLOT = n => 'srroute_slot_' + n;
 // [id, label, kind] kind: 'm' movable, 's' sub-button of the top bar (hide/opacity only); flags: e = essential (never hidden)
 export const ELEMENTS = [
   ['spdgrp', 'SPEEDO', 'm'], ['route', 'ROUTE STRIP', 'm'], ['msg', 'MESSAGES', 'm'],

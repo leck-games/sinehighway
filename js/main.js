@@ -5,7 +5,7 @@
 // terrain grip/wet -> physics surfaceAt, and every event is forwarded to window.SR for the sound plugin (PLUGIN_API.md).
 import * as THREE from 'three';
 import * as W from './world.js';
-import { NAME as GAME_NAME, VERSION as GAME_VERSION, VERSIONS_URL } from './version.js'; // 'Sine Rally V0.1'
+import { NAME as GAME_NAME, VERSION as GAME_VERSION, VERSIONS_URL } from './version.js'; // 'Sine Rally Route V0.1'
 import { createEngineAudio } from './engine-audio.js'; // engine sound plugin host (PLUGIN_API.md); talks to plugins only via the API
 import { createSoundEditor } from './sound-editor.js';
 import * as PWR from './power.js';
@@ -51,9 +51,9 @@ const QUAL = { Low: { pr: 1, post: true, fx: 1, sr: 200, hatch: 1.15, grass: 700
   Ultra: { pr: 3, post: true, fx: 1, sr: 380, hatch: 1, grass: 24000, trees: 2, rd: 2, det: 1, sh: 1024, farK: 1.12, farN: 128, nearN: 160 } };
 const Q_ORDER = ['Low', 'Med', 'High', 'Ultra'];
 const qArg = (QS.get('q') || '').toLowerCase(), qMap = { low: 'Low', med: 'Med', medium: 'Med', high: 'High', ultra: 'Ultra' };
-let qName = qMap[qArg] || localStorage.getItem('sinerally_q3') || (isTouch ? 'Med' : 'High'); if (!QUAL[qName]) qName = isTouch ? 'Med' : 'High'; // default stays Med on phones (iPhone 12 safe)
+let qName = qMap[qArg] || localStorage.getItem('srroute_q3') || (isTouch ? 'Med' : 'High'); if (!QUAL[qName]) qName = isTouch ? 'Med' : 'High'; // default stays Med on phones (iPhone 12 safe)
 const qLoad = qName; // grid sizes (draw distance) are fixed to the level chosen at load
-let qLocked = !!(qMap[qArg] || localStorage.getItem('sinerally_q3')); // user choice: dyn-res never changes the level then
+let qLocked = !!(qMap[qArg] || localStorage.getItem('srroute_q3')); // user choice: dyn-res never changes the level then
 let mapOpen = false; const DYN = QS.get('dyn') !== '0'; let dynS = 1, lastSr = 0; // dynamic resolution scale 0.5..1
 const SMALL = isTouch || qName === 'Low'; // terrain grid sizes are fixed at load (phones: smaller grids)
 const scene = new THREE.Scene();
@@ -74,7 +74,7 @@ function applyQuality() {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
 }
 addEventListener('resize', () => applyQuality());
-function setQual(n) { if (!QUAL[n]) return; qName = n; qLocked = true; dynS = 1; localStorage.setItem('sinerally_q3', qName); applyQuality();
+function setQual(n) { if (!QUAL[n]) return; qName = n; qLocked = true; dynS = 1; localStorage.setItem('srroute_q3', qName); applyQuality();
   if ((QUAL[n].farN || 0) !== (QUAL[qLoad].farN || 0) && typeof msg === 'function') msg('GFX ' + n.toUpperCase() + (QUAL[n].farN > (QUAL[qLoad].farN || 0) ? ' · RELOAD FOR FULL DRAW DISTANCE' : '')); }
 function cycleQ() { setQual(Q_ORDER[(Q_ORDER.indexOf(qName) + 1) % Q_ORDER.length]); }
 let dynT = 0, dynFr = 0, slowN = 0;
@@ -184,13 +184,13 @@ function collideRocks(s) { // circle push-out + bounce on the physics state (aft
 // ---------- vehicle (physics module rig) + visuals (vehicle module models, comic materials) ----------
 const rig = createRig({ THREE, world, emit: (t, d) => bus.emit(t, d) });
 // handling model (physics module): ARCADE (default, NFS-Carbon/Trackmania-style) or NORMAL (the previous model); ☰ HANDLING, HUD ARC/NRM, key H
-let hMode = ({ arcade: 'arcade', normal: 'normal' })[QS.get('handling') || localStorage.getItem('sinerally_handling') || store.get('srp_handling', 'arcade')] || 'arcade';
+let hMode = ({ arcade: 'arcade', normal: 'normal' })[QS.get('handling') || localStorage.getItem('srroute_handling') || store.get('srroute_p_handling', 'arcade')] || 'arcade';
 const carMat = objMat({ hatch: 0.5 }), flameMat = objMat({ unlit: true });
 const carRoot = new THREE.Group(); scene.add(carRoot);
 const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), decalMat(0x203040, true)); scene.add(shadow);
 let vis = null, flameOrig = null, veh = null, vDef = null;
 vshadow = createVehicleShadow(renderer, scene, (x, z) => T.groundAt(x, z));
-const assist = { stab: localStorage.getItem('sinerally_stab') ? localStorage.getItem('sinerally_stab') === '1' : isTouch, tc: localStorage.getItem('sinerally_tc') !== '0' };
+const assist = { stab: localStorage.getItem('srroute_stab') ? localStorage.getItem('srroute_stab') === '1' : isTouch, tc: localStorage.getItem('srroute_tc') !== '0' };
 const cmatCache = new Map();
 function comicify(root) { // attachments ship standard three.js materials: swap them for cached comic objMats (tint = their colour)
   root.traverse(o => {
@@ -200,7 +200,7 @@ function comicify(root) { // attachments ship standard three.js materials: swap 
     o.material = c;
   });
 }
-function loadAttach(id) { return store.get('srp_attach_' + id, getVehicle(id).defaultAttachments || []); }
+function loadAttach(id) { return store.get('srroute_p_attach_' + id, getVehicle(id).defaultAttachments || []); }
 function useVehicle(id, attach) {
   id = getVehicle(id).id; const a = attach || loadAttach(id);
   if (vis) { vis.group.remove(rig.root); carRoot.remove(vis.group); if (flameOrig) vis.flame.material = flameOrig; vis.dispose(); }
@@ -208,14 +208,14 @@ function useVehicle(id, attach) {
   vis = buildVehicle(THREE, vDef, carMat); flameOrig = vis.flame.material; vis.flame.material = flameMat;
   vis.group.add(rig.root); carRoot.add(vis.group); comicify(rig.root);
   const d = veh.P.dims || [2, 1.5, 4.4]; shadow.userData.w = d[0] * 1.5; shadow.userData.l = d[2] * 1.05;
-  store.set('srp_vehicle', id); store.set('srp_attach_' + id, rig.attach); localStorage.setItem('sinerally_veh', id);
+  store.set('srroute_p_vehicle', id); store.set('srroute_p_attach_' + id, rig.attach); localStorage.setItem('srroute_veh', id);
   return vDef;
 }
 function setVehicle(id) { if (id === vDef?.id) return; const x = veh.p.x, z = veh.p.z, yaw = PH.yawOf(veh); useVehicle(id); spawn(x, z, yaw); msg(vDef.name); }
-function setAttachments(ids) { rig.setAttachments(ids); comicify(rig.root); store.set('srp_attach_' + vDef.id, rig.attach); return rig.attach; }
+function setAttachments(ids) { rig.setAttachments(ids); comicify(rig.root); store.set('srroute_p_attach_' + vDef.id, rig.attach); return rig.attach; }
 function spawn(x, z, yaw = 0) { T.setRef(-1e9); PH.spawn(veh, world, x, z, yaw); T.setRef(veh.p.y); lastGear = veh.gear; } // route spawns are always on the road (tunnel floors included)
 const fwdSpeed = () => veh.v.x * veh.fwd.x + veh.v.y * veh.fwd.y + veh.v.z * veh.fwd.z;
-{ let id = QS.get('car') || store.get('srp_vehicle', null) || localStorage.getItem('sinerally_veh') || DEFAULT_VEHICLE; if (!listVehicles().some(v => v.id === id)) id = DEFAULT_VEHICLE; useVehicle(id); rig.setMode(hMode); }
+{ let id = QS.get('car') || store.get('srroute_p_vehicle', null) || localStorage.getItem('srroute_veh') || DEFAULT_VEHICLE; if (!listVehicles().some(v => v.id === id)) id = DEFAULT_VEHICLE; useVehicle(id); rig.setMode(hMode); }
 // spawn on the right lane of the endless route (?s= metres along the route, default 600 m)
 const ROUTE_S0 = Math.max(0, +(QS.get('s') || 600));
 function lanePoint(s, d = 3) { const p = W.routePoint(s); return { x: p.x - p.tz * d, z: p.z + p.tx * d, yaw: Math.atan2(p.tx, p.tz), y: p.y }; }
@@ -314,9 +314,11 @@ function routeHud(dt) {
   const cx = X(sCur); c.fillStyle = '#ff6a1a'; c.strokeStyle = '#111'; c.lineWidth = 2; c.beginPath(); c.moveTo(cx, by + 2); c.lineTo(cx - 6, by - 8); c.lineTo(cx + 6, by - 8); c.closePath(); c.fill(); c.stroke();
   c.lineJoin = 'round'; c.textBaseline = 'alphabetic';
   const ink = (t, x, y, px, col, al) => { c.font = `italic 900 ${px}px "Arial Black",system-ui`; c.textAlign = al; c.lineWidth = 4; c.strokeStyle = '#111'; c.strokeText(t, x, y); c.fillStyle = col; c.fillText(t, x, y); };
-  ink((odo / 1000).toFixed(1) + ' KM', 10, 24, 20, '#ffd23c', 'left');
-  ink(seg.title.toUpperCase(), Wd / 2 + 4, 22, 13, BIOME_COL[seg.b] === '#eef3f8' ? '#fff' : '#fff', 'center');
-  ink('NEXT ' + nx.title.toUpperCase() + ' ' + Math.max(0, (nx.s - sCur) / 1000).toFixed(1) + ' KM', Wd - 10, 22, 11, '#fff', 'right');
+  const fit = (t, px, w) => { c.font = `italic 900 ${px}px "Arial Black",system-ui`; const m = c.measureText(t).width; return m > w ? Math.max(8, px * w / m) : px; };
+  const kmT = (odo / 1000).toFixed(1) + ' KM', nxT = 'NEXT ' + nx.title.toUpperCase() + ' ' + Math.max(0, (nx.s - sCur) / 1000).toFixed(1) + ' KM';
+  ink(kmT, 10, 24, 20, '#ffd23c', 'left'); const kw = c.measureText(kmT).width + 22;
+  const npx = fit(nxT, 11, (Wd - kw) * 0.55); ink(nxT, Wd - 10, 22, npx, '#fff', 'right'); const nw = c.measureText(nxT).width + 18; // the three labels never overlap
+  const tt = seg.title.toUpperCase(), tw = Wd - 10 - nw - kw; ink(tt, kw + tw / 2, 22, fit(tt, 13, tw), '#fff', 'center');
   if (seg.b !== lastBiome) { if (lastBiome >= 0) msg('ENTERING ' + seg.title.toUpperCase(), 'big'); lastBiome = seg.b; fire('biome', { biome: seg.name, title: seg.title, s: sCur }); }
 }
 // ---------- HUD gauge (comic ink): tacho arc, gear, rpm, surface + engine temperature bar (physics heat) ----------
@@ -348,8 +350,8 @@ const labelsEl = $('labels'), hpLabs = [], recentHit = new Map(); const MAXLAB =
 for (let i = 0; i < MAXLAB; i++) { const d = document.createElement('div'); d.className = 'hp'; d.innerHTML = '<div class="segs"><div class="seg"><i></i></div><div class="seg"><i></i></div><div class="seg"><i></i></div></div><span></span>'; d.style.display = 'none'; labelsEl.appendChild(d); hpLabs.push(d); }
 const pv = new THREE.Vector3();
 function project(x, y, z) { pv.set(x, y, z).project(camera); if (pv.z > 1 || pv.z < -1) return null; return [(pv.x * 0.5 + 0.5) * innerWidth, (-pv.y * 0.5 + 0.5) * innerHeight]; }
-let labT = 0, labTrees = []; let treeHpOn = localStorage.getItem('sinerally_treehp') === 'on'; // tree HP hidden by default; toggle in ☰ → CONTROLS
-function setTreeHp(on) { treeHpOn = !!on; localStorage.setItem('sinerally_treehp', on ? 'on' : 'off'); if (!on) for (const d of hpLabs) d.style.display = 'none'; }
+let labT = 0, labTrees = []; let treeHpOn = localStorage.getItem('srroute_treehp') === 'on'; // tree HP hidden by default; toggle in ☰ → CONTROLS
+function setTreeHp(on) { treeHpOn = !!on; localStorage.setItem('srroute_treehp', on ? 'on' : 'off'); if (!on) for (const d of hpLabs) d.style.display = 'none'; }
 function updateLabels(dt) {
   if (!treeHpOn) return;
   labT -= dt; const now = performance.now();
@@ -389,10 +391,10 @@ const surfIdx = s => typeof s === 'object' && s ? (s.si ?? 2) : Math.max(0, W.SU
 // ---------- day/night + weather: ONE system (terrain weather owns sky, rain, wet ground, lightning, uFar/uNight/uRain).
 // The game only adds its fog/dust overlay on top (no second rain), and maps its menu / ?wx= / ?tod= onto T.setRain / T.setTimeOfDay.
 const TIMES = { Day: 0.4, Sunset: 0.715, Night: 0.97 };
-let timeMode = localStorage.getItem('sinerally_time') || 'Auto', tod = +(QS.get('tod') || 0.36); if (QS.get('tod')) timeMode = 'Fixed';
+let timeMode = localStorage.getItem('srroute_time') || 'Auto', tod = +(QS.get('tod') || 0.36); if (QS.get('tod')) timeMode = 'Fixed';
 const WXP = { fog: { far: 0.34, grip: 0.96, dark: 0.85, hz: new THREE.Color(0xc9d0d6) }, dust: { far: 0.3, grip: 0.9, dark: 0.82, hz: new THREE.Color(0xd99a5c) } };
 const WX_MODES = ['Auto', 'clear', 'rain', 'storm', 'fog', 'dust'];
-let wxMode = QS.get('wx') || localStorage.getItem('sinerally_wx') || 'Auto'; if (!WX_MODES.includes(wxMode)) wxMode = 'Auto';
+let wxMode = QS.get('wx') || localStorage.getItem('srroute_wx') || 'Auto'; if (!WX_MODES.includes(wxMode)) wxMode = 'Auto';
 const wx = { fog: 0, dust: 0 }; if (WXP[wxMode]) wx[wxMode] = 1;
 function applyTime() { if (timeMode === 'Auto') T.setTimeOfDay(tod, true); else T.setTimeOfDay(TIMES[timeMode] ?? tod, false); }
 function applyWx() { T.setRain(wxMode === 'Auto' ? 'auto' : wxMode === 'rain' ? 'on' : wxMode === 'storm' ? 'storm' : 'off'); }
@@ -408,7 +410,7 @@ const SKY_P = { FUEL: { h: 0xf4dcb4, hk: 0.4, z: 0x3b7fd0, zk: 0.3, haze: 0.8, f
   Clear: { haze: 0.3, far: 1, cir: 0.5 },
   Hazy: { h: 0xeee3cc, hk: 0.55, z: 0x86a9cc, zk: 0.5, haze: 1, far: 0.7, cir: 0.25 },
   Golden: { h: 0xffbf86, hk: 0.55, z: 0x5a70bc, zk: 0.35, haze: 0.9, far: 0.88, cir: 1, sun: 0xff9a48, sk: 0.45, l: [1.06, 0.94, 0.8] } };
-let skyMode = QS.get('sky') || localStorage.getItem('sinerally_sky') || 'FUEL'; if (!SKY_P[skyMode]) skyMode = 'FUEL';
+let skyMode = QS.get('sky') || localStorage.getItem('srroute_sky') || 'FUEL'; if (!SKY_P[skyMode]) skyMode = 'FUEL';
 const skyC = {}; for (const k in SKY_P) { const P = SKY_P[k]; skyC[k] = { h: P.h != null ? new THREE.Color(P.h) : null, z: P.z != null ? new THREE.Color(P.z) : null, sun: P.sun != null ? new THREE.Color(P.sun) : null }; }
 function skyGrade() { const P = SKY_P[skyMode], C = skyC[skyMode], d = 1 - U.uNight.value;
   if (C.h) U.uHorizon.value.lerp(C.h, P.hk * d); if (C.z) U.uZenith.value.lerp(C.z, P.zk * d); if (C.sun) U.uSunCol.value.lerp(C.sun, P.sk * d);
@@ -450,8 +452,8 @@ function buildMenu() {
   if (veh.cargo.capacity > 0) acts.push(['UNLOAD LOGS (' + veh.cargo.logs + ')', () => rig.unload()]);
   actRow(d, 'CAR', acts); d.appendChild(mk('div', 'msec', 'HANDLING & ASSISTS'));
   segRows(d, [['HANDLING', ['Arcade', 'Normal'], () => hMode === 'arcade' ? 'Arcade' : 'Normal', v => setHandling(v.toLowerCase())],
-    ['STABILITY ASSIST', ['On', 'Off'], () => assist.stab ? 'On' : 'Off', v => { assist.stab = veh.assist.stab = v === 'On'; localStorage.setItem('sinerally_stab', assist.stab ? '1' : '0'); }],
-    ['TRACTION CONTROL', ['On', 'Off'], () => assist.tc ? 'On' : 'Off', v => { assist.tc = veh.assist.tc = v === 'On'; localStorage.setItem('sinerally_tc', assist.tc ? '1' : '0'); }]]);
+    ['STABILITY ASSIST', ['On', 'Off'], () => assist.stab ? 'On' : 'Off', v => { assist.stab = veh.assist.stab = v === 'On'; localStorage.setItem('srroute_stab', assist.stab ? '1' : '0'); }],
+    ['TRACTION CONTROL', ['On', 'Off'], () => assist.tc ? 'On' : 'Off', v => { assist.tc = veh.assist.tc = v === 'On'; localStorage.setItem('srroute_tc', assist.tc ? '1' : '0'); }]]);
   d.appendChild(mk('div', 'msec', 'ROUTE'));
   { const g = W.segmentAt(sCur), n = W.nextBiome(sCur); d.appendChild(mk('div', 'mnote', `${(odo / 1000).toFixed(1)} km driven · route km ${(sCur / 1000).toFixed(1)} · ${g.title} → ${n.title} in ${((n.s - sCur) / 1000).toFixed(1)} km · seed ${W.SEED} (?seed=)`)); }
   d.appendChild(mk('div', 'msec', 'STATUS'));
@@ -472,11 +474,11 @@ function buildMenu() {
   hu.appendChild(mk('div', 'mnote', 'WASD/arrows · Space drift · Shift boost · R reset to road · O autopilot · H handling · V next vehicle · G graphics · F FPS · I HUD mode · U edit HUD · Shift+U unload.'));
   // WORLD
   const w = $('mWorld'); w.innerHTML = '';
-  segRows(w, [['TIME OF DAY', ['Auto', 'Day', 'Sunset', 'Night'], () => timeMode, v => { timeMode = v; localStorage.setItem('sinerally_time', v); applyTime(); }],
-    ['WEATHER', WX_MODES, () => wxMode, v => { wxMode = v; localStorage.setItem('sinerally_wx', v); applyWx(); }]]);
+  segRows(w, [['TIME OF DAY', ['Auto', 'Day', 'Sunset', 'Night'], () => timeMode, v => { timeMode = v; localStorage.setItem('srroute_time', v); applyTime(); }],
+    ['WEATHER', WX_MODES, () => wxMode, v => { wxMode = v; localStorage.setItem('srroute_wx', v); applyWx(); }]]);
   { const r = mk('div', 'mrow'); r.appendChild(mk('span', '', 'SKY')); const se = document.createElement('select'); se.id = 'mSky'; se.className = 'msel';
     for (const k in SKY_P) { const o = document.createElement('option'); o.value = k; o.textContent = k.toUpperCase(); se.appendChild(o); } se.value = skyMode;
-    se.onchange = () => { skyMode = se.value; localStorage.setItem('sinerally_sky', skyMode); }; r.appendChild(se); w.appendChild(r); }
+    se.onchange = () => { skyMode = se.value; localStorage.setItem('srroute_sky', skyMode); }; r.appendChild(se); w.appendChild(r); }
   actRow(w, 'SCENERY', [['🌲 REGROW TREES & ROCKS', () => { T.resetTrees(); props.clearTrees(); hpMap.clear(); rockGone.clear(); store.set('srr_rocks_gone', []); scx = 1e9; msg('SCENERY REGROWN'); }], ['🔥 PUT OUT FIRES', () => { T.extinguishAll(); }]]);
 }
 function showTab(t) { if (!TABS[t]) t = 'drive'; mTab = t;
@@ -524,11 +526,11 @@ addEventListener('keydown', e => { if (e.target && /INPUT|TEXTAREA|SELECT/.test(
   if (e.code === 'KeyV') { const l = listVehicles(), i = l.findIndex(v => v.id === vDef.id); setVehicle(l[(i + 1) % l.length].id); }
   if (e.code === 'KeyU') { if (e.shiftKey) rig.unload(); else uied.openEd(); } /* U = EDIT UI (unload: Shift+U) */ if (e.code === 'KeyH') setHandling(hMode === 'arcade' ? 'normal' : 'arcade'); if (e.code === 'KeyI') cycleUi(); });
 // ---------- HUD toggles: handling ARC/NRM, UI hide (FULL → MINIMAL → NONE), unload (only with logs) ----------
-function setHandling(m) { hMode = m === 'normal' ? 'normal' : 'arcade'; rig.setMode(hMode); localStorage.setItem('sinerally_handling', hMode); store.set('srp_handling', hMode);
+function setHandling(m) { hMode = m === 'normal' ? 'normal' : 'arcade'; rig.setMode(hMode); localStorage.setItem('srroute_handling', hMode); store.set('srroute_p_handling', hMode);
   $('tHand').classList.toggle('nrm', hMode === 'normal'); steerSm = 0; if (typeof quickLabels === 'function' && audio) quickLabels(); return hMode; }
 let uied = null; // layout editor (created below, after the sound editor)
-const UI_MODES = ['full', 'minimal', 'none']; let uiMode = UI_MODES.includes(localStorage.getItem('sinerally_ui')) ? localStorage.getItem('sinerally_ui') : 'full', unlShown = null;
-function setUi(m) { uiMode = UI_MODES.includes(m) ? m : 'full'; localStorage.setItem('sinerally_ui', uiMode); document.body.classList.toggle('ui-min', uiMode === 'minimal'); document.body.classList.toggle('ui-none', uiMode === 'none');
+const UI_MODES = ['full', 'minimal', 'none']; let uiMode = UI_MODES.includes(localStorage.getItem('srroute_ui')) ? localStorage.getItem('srroute_ui') : 'full', unlShown = null;
+function setUi(m) { uiMode = UI_MODES.includes(m) ? m : 'full'; localStorage.setItem('srroute_ui', uiMode); document.body.classList.toggle('ui-min', uiMode === 'minimal'); document.body.classList.toggle('ui-none', uiMode === 'none');
   $('tUi').title = 'HUD: ' + uiMode.toUpperCase() + ' (I)'; if (audio) quickLabels(); if (uied) uied.applyAll(); return uiMode; }
 function cycleUi() { return setUi(UI_MODES[(UI_MODES.indexOf(uiMode) + 1) % 3]); }
 $('tUi').onclick = () => { cycleUi(); msg('HUD ' + uiMode.toUpperCase()); }; $('tHand').onclick = () => { setHandling(hMode === 'arcade' ? 'normal' : 'arcade'); msg(hMode.toUpperCase() + ' HANDLING'); };

@@ -8,7 +8,7 @@ export const BUILTIN = [
   { id: 'enginesim', label: 'ENGINE SIM', url: new URL('../plugins/enginesim/plugin.js', import.meta.url).href },
   { id: 'example-simple', label: 'SIMPLE (EXAMPLE)', url: new URL('../plugins/example-simple-engine.js', import.meta.url).href },
 ];
-const DEFAULT_ID = 'enginesim', LS = 'sinerally_snd1', LS_FILE = 'sinerally_snd1_file', MAX_FILE = 256 * 1024;
+const DEFAULT_ID = 'enginesim', LS = 'srroute_snd1', LS_FILE = 'srroute_snd1_file', MAX_FILE = 256 * 1024;
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ' timed out after ' + ms / 1000 + ' s')), ms))]);
 
