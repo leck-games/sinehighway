@@ -1,9 +1,9 @@
 {
- "name": "Sine Rally Route V0.1",
- "short_name": "Sine Rally Route V0.1",
- "description": "Sine Rally Route V0.1: an endless, curvy Route-66-style comic drive through prairie, red-rock desert, pine forest, snowy mountains and coast",
- "id": "./?app=sinerally-route",
- "start_url": "./?app=sinerally-route",
+ "name": "SineHighway V0.2",
+ "short_name": "SineHighway V0.2",
+ "description": "SineHighway V0.2: an endless, curvy Route-66-style comic drive through prairie, red-rock desert, pine forest, snowy mountains and coast",
+ "id": "./?app=sinehighway",
+ "start_url": "./?app=sinehighway",
  "scope": "./",
  "display": "fullscreen",
  "display_override": [

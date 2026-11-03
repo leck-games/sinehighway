@@ -1,6 +1,6 @@
 # Merge notes
 
-> **Sine Rally Route fork:** `js/terrain/` is a fork here (rewritten for the endless route) and is no longer re-synced from sinerally-terrain. The terrain sync script was removed. The physics notes below still apply.
+> **SineHighway fork:** `js/terrain/` is a fork here (rewritten for the endless route) and is no longer re-synced from sinerally-terrain. The terrain sync script was removed. The physics notes below still apply.
 
 ## Physics + Terrain modules — merged (2026-10-28)
 Followed `sinerally-physics/MERGE_NOTES.md` and `sinerally-terrain/MERGE_NOTES.md`. Both modules are **vendored, never

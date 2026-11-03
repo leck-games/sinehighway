@@ -1,4 +1,4 @@
-// Sine Rally Route: sparse roadside props along the endless route — delineator posts, mile markers, "ENTERING <biome>" signs,
+// SineHighway: sparse roadside props along the endless route — delineator posts, mile markers, "ENTERING <biome>" signs,
 // US-66 shields and the occasional diner / gas station. Everything is placed from the route parameter s (deterministic by seed),
 // in local (floating-origin) coordinates, and rebuilt when the car has moved ~150 m along the route or the origin shifts.
 import * as THREE from 'three';

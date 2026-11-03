@@ -1,4 +1,4 @@
-// Sine Rally Route — endless procedural highway world.
+// SineHighway — endless procedural highway world.
 // One continuous two-lane road (heading random walk with bounded curvature, integrated in 256 m chunks that are generated
 // ahead of the player and disposed behind), gentle hills from a smooth profile with a grade cap (~11 %), biomes that change
 // every few km (400 m blends), terrain that always yields to the road (cut/fill bed, tunnel ridges, gorges under bridges).

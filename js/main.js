@@ -1,11 +1,11 @@
-// Sine Rally Route — endless Route-66-style road through prairie, red-rock desert, pine forest, snowy mountains and coast.
+// SineHighway — endless Route-66-style road through prairie, red-rock desert, pine forest, snowy mountains and coast.
 // Game shell (comic renderer, route strip HUD, props, autopilot, floating origin, sound plugin host) + vendored modules: js/terrain/
 // (endless chunked route, biomes, trees with HP, grass fire, weather, day/night sky) and js/phys/ (rigid-body step, vehicles, attachments, heat).
 // Everything talks through ONE event bus (`bus`): physics heat -> terrain fire, physics tree contacts -> terrain tree store,
 // terrain grip/wet -> physics surfaceAt, and every event is forwarded to window.SR for the sound plugin (PLUGIN_API.md).
 import * as THREE from 'three';
 import * as W from './world.js';
-import { NAME as GAME_NAME, VERSION as GAME_VERSION, VERSIONS_URL } from './version.js'; // 'Sine Rally Route V0.1'
+import { NAME as GAME_NAME, VERSION as GAME_VERSION, VERSIONS_URL } from './version.js'; // 'SineHighway V0.1'
 import { createEngineAudio } from './engine-audio.js'; // engine sound plugin host (PLUGIN_API.md); talks to plugins only via the API
 import { createSoundEditor } from './sound-editor.js';
 import * as PWR from './power.js';
@@ -22,7 +22,7 @@ import { listVehicles, getVehicle, DEFAULT_VEHICLE } from './phys/vehicles/index
 import { openSelector } from './phys/vehicles/selector.js';
 import { renderPicker } from './phys/attachments/picker.js';
 import { melts } from './phys/attachments/index.js';
-import { createProps } from './props.js'; // Sine Rally Route: delineators, mile markers, biome signs, diners / gas stations
+import { createProps } from './props.js'; // SineHighway: delineators, mile markers, biome signs, diners / gas stations
 let audio = null; // engine sound host (created after the telemetry block)
 import { createVehicleShadow } from './vshadow.js';
 const { WATER, hash2, sample, surfaceOf, colourOf, normal, height, ground } = W;
@@ -191,6 +191,8 @@ const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2
 let vis = null, flameOrig = null, veh = null, vDef = null;
 vshadow = createVehicleShadow(renderer, scene, (x, z) => T.groundAt(x, z));
 const assist = { stab: localStorage.getItem('srroute_stab') ? localStorage.getItem('srroute_stab') === '1' : isTouch, tc: localStorage.getItem('srroute_tc') !== '0' };
+// GEARBOX: Auto (default) or Manual (☰ → CONTROLS & HUD). Manual: X / Z keys (Z = Y on QWERTZ), or swipe up / down on the gas pedal while holding it.
+let gbMode = ({ manual: 'Manual', auto: 'Auto' })[(QS.get('gearbox') || localStorage.getItem('srroute_gearbox') || 'auto').toLowerCase()] || 'Auto', gearFlash = 0;
 const cmatCache = new Map();
 function comicify(root) { // attachments ship standard three.js materials: swap them for cached comic objMats (tint = their colour)
   root.traverse(o => {
@@ -204,7 +206,7 @@ function loadAttach(id) { return store.get('srroute_p_attach_' + id, getVehicle(
 function useVehicle(id, attach) {
   id = getVehicle(id).id; const a = attach || loadAttach(id);
   if (vis) { vis.group.remove(rig.root); carRoot.remove(vis.group); if (flameOrig) vis.flame.material = flameOrig; vis.dispose(); }
-  rig.setVehicle(id, a); veh = rig.state; vDef = rig.vehicle; veh.assist.stab = assist.stab; veh.assist.tc = assist.tc; lastGear = veh.gear; PWR.apply(veh, vDef); // per-build power curve (VEHICLE → ENGINE / POWER)
+  rig.setVehicle(id, a); veh = rig.state; vDef = rig.vehicle; veh.assist.stab = assist.stab; veh.assist.tc = assist.tc; veh.manual = gbMode === 'Manual'; lastGear = veh.gear; PWR.apply(veh, vDef); // per-build power curve (VEHICLE → ENGINE / POWER)
   vis = buildVehicle(THREE, vDef, carMat); flameOrig = vis.flame.material; vis.flame.material = flameMat;
   vis.group.add(rig.root); carRoot.add(vis.group); comicify(rig.root);
   const d = veh.P.dims || [2, 1.5, 4.4]; shadow.userData.w = d[0] * 1.5; shadow.userData.l = d[2] * 1.05;
@@ -243,7 +245,7 @@ function skid(w, x, y, z, rx, rz, on) {
   skPos.set([...a, ...c, ...b, ...b, ...c, ...d], o); skNext = (skNext + 1) % SKN; skGeo.attributes.position.needsUpdate = true;
 }
 // ---------- input ----------
-const key = {}; addEventListener('keydown', e => { key[e.code] = 1; if (uied && uied.open) return; if (e.code === 'KeyR') reset(); if (e.code === 'KeyF') toggleDbg(); if (e.code === 'KeyG') cycleQ(); });
+const key = {}; addEventListener('keydown', e => { key[e.code] = 1; if (uied && uied.open) return; if (e.code === 'KeyR') reset(); if (e.code === 'KeyF') toggleDbg(); if (!e.repeat && e.code === 'KeyX') manualShift(1); if (!e.repeat && e.code === 'KeyZ') manualShift(-1); if (e.code === 'KeyG') cycleQ(); });
 addEventListener('keyup', e => key[e.code] = 0);
 const touch = { steer: 0, pitch: 0, gas: 0, brk: 0, bst: 0, drf: 0 }; let tilt = false, tiltSteer = 0;
 if (isTouch) { $('joy').style.display = 'block'; ['bGas', 'bBrk', 'bBst', 'bDrf'].forEach(b => $(b).style.display = 'flex'); }
@@ -258,6 +260,20 @@ function joyMove(e) { for (const t of e.changedTouches) if (t.identifier === joy
   const el = $(id); el.addEventListener('touchstart', e => { touch[k] = 1; el.classList.add('on'); e.preventDefault(); }, { passive: false });
   const up = () => { touch[k] = 0; el.classList.remove('on'); }; el.addEventListener('touchend', up); el.addEventListener('touchcancel', up);
 });
+// MANUAL gearbox on touch: a quick vertical swipe on the gas pedal shifts (up = up, down = down); the finger keeps the throttle held.
+// A swipe = 32+ px vertical travel within the last 300 ms (measured from where the finger was 300 ms ago); after a shift the
+// history restarts, so each further gear needs another swipe. Slow drift while holding never shifts.
+{ const el = $('bGas'), SW = { id: null, h: [] };
+  el.addEventListener('touchstart', e => { const t = e.changedTouches[0]; SW.id = t.identifier; SW.h = [[performance.now(), t.clientY]]; }, { passive: false });
+  el.addEventListener('touchmove', e => { for (const t of e.changedTouches) if (t.identifier === SW.id) {
+    const now = performance.now(), h = SW.h; while (h.length > 1 && h[1][0] <= now - 300) h.shift(); // h[0] = position 300 ms ago
+    const dy = t.clientY - h[0][1];
+    if (Math.abs(dy) >= 32) { manualShift(dy < 0 ? 1 : -1); SW.h = [[now, t.clientY]]; } else h.push([now, t.clientY]);
+  } e.preventDefault(); }, { passive: false });
+  const end = e => { for (const t of e.changedTouches) if (t.identifier === SW.id) SW.id = null; }; el.addEventListener('touchend', end); el.addEventListener('touchcancel', end);
+}
+function manualShift(dir) { if (gbMode !== 'Manual' || autoOn || !veh) return 0; const g = PH.shiftGear(veh, dir); if (g) gearFlash = 0.45; return g; }
+function setGearbox(m) { gbMode = m === 'Manual' ? 'Manual' : 'Auto'; localStorage.setItem('srroute_gearbox', gbMode); if (veh) veh.manual = gbMode === 'Manual' && !autoOn; msg('GEARBOX: ' + gbMode.toUpperCase()); }
 $('tTilt').onclick = async () => {
   if (!tilt && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) { try { if (await DeviceOrientationEvent.requestPermission() !== 'granted') return; } catch (e) { return; } }
   tilt = !tilt; msg('TILT STEERING ' + (tilt ? 'ON' : 'OFF')); if (audio) quickLabels();
@@ -282,6 +298,7 @@ function readInput(dt) {
   inp.gas = key.KeyW || key.ArrowUp || touch.gas ? 1 : 0; inp.brake = key.KeyS || key.ArrowDown || touch.brk ? 1 : 0;
   inp.hand = key.Space || touch.drf ? 1 : 0; inp.boost = key.ShiftLeft || key.ShiftRight || touch.bst ? 1 : 0;
   inp.pitch = Math.max(-1, Math.min(1, (key.KeyE ? 1 : 0) - (key.KeyQ ? 1 : 0) + touch.pitch));
+  veh.manual = gbMode === 'Manual' && !autoOn; // the autopilot always uses the auto box
   if (autoOn) autopilot(dt);
   if (window.__st && window.__st.drive) window.__st.drive(inp, dt); // tests: in-frame autopilot (tools/test-rim.cjs)
 }
@@ -333,7 +350,9 @@ function gauge() {
   gc.strokeStyle = '#111'; gc.lineWidth = 2; for (let i = 0; i <= 8; i++) { const a = a0 + (a1 - a0) * i / 8; gc.beginPath(); gc.moveTo(cx + Math.cos(a) * (R - 7), cy + Math.sin(a) * (R - 7)); gc.lineTo(cx + Math.cos(a) * (R + 7), cy + Math.sin(a) * (R + 7)); gc.stroke(); }
   gc.textAlign = 'center'; gc.lineJoin = 'round'; gc.fillStyle = '#ffd23c'; gc.strokeStyle = '#111';
   const ink = (t, x, y, f, lw, col = '#ffd23c') => { gc.font = f; gc.lineWidth = lw; gc.fillStyle = '#111'; gc.fillText(t, x + 3, y + 3); gc.strokeText(t, x, y); gc.fillStyle = col; gc.fillText(t, x, y); };
-  ink(veh.gear < 0 ? 'R' : String(veh.gear), cx, cy - 14, 'italic 900 46px "Arial Black",system-ui', 5);
+  const gfl = gearFlash > 0 ? gearFlash / 0.45 : 0; // brief flash + pop on a manual shift
+  ink(veh.gear < 0 ? 'R' : String(veh.gear), cx, cy - 14, 'italic 900 ' + Math.round(46 + 12 * gfl) + 'px "Arial Black",system-ui', 5, gfl > 0 ? '#fff' : '#ffd23c');
+  if (veh.manual) ink('M', cx + 30, cy - 40, 'italic 900 14px "Arial Black",system-ui', 3, '#4fb3ff');
   gc.fillStyle = '#fff'; gc.font = 'italic 900 11px "Arial Black",system-ui'; gc.lineWidth = 3;
   const lbl = (t, x, y) => { gc.strokeText(t, x, y); gc.fillText(t, x, y); };
   lbl((veh.rpm / 1000).toFixed(1) + 'K RPM', cx - 56, cy + 12); lbl(String(TEL.surface || '').toUpperCase(), cx + 56, cy + 12);
@@ -469,9 +488,10 @@ function buildMenu() {
   const r0 = mk('div', 'mrow'); r0.appendChild(e1); hu.appendChild(r0); hu.appendChild(mk('div', 'mnote', 'Drag, scale, hide or fade every HUD element; save presets and slots. Keyboard: U.'));
   segRows(hu, [['TREE HP', ['Off', 'On'], () => treeHpOn ? 'On' : 'Off', v => setTreeHp(v === 'On'), 'HP bars and damage numbers over trees. Off by default.']]);
   segRows(hu, [['HUD MODE', ['Full', 'Minimal', 'None'], () => uiMode[0].toUpperCase() + uiMode.slice(1), v => setUi(v.toLowerCase()), 'NONE keeps only a faint ☰ ⚙ corner (and the touch controls). Keyboard: I.'],
-    ['TILT STEERING', ['Off', 'On'], () => tilt ? 'On' : 'Off', v => { if ((v === 'On') !== tilt) $('tTilt').onclick(); }]]);
+    ['TILT STEERING', ['Off', 'On'], () => tilt ? 'On' : 'Off', v => { if ((v === 'On') !== tilt) $('tTilt').onclick(); }],
+    ['GEARBOX', ['Auto', 'Manual'], () => gbMode, v => setGearbox(v), 'MANUAL: swipe up / down on the gas pedal (keep holding it) or keys X / Z. Down from 1st at a stop = R. The autopilot always shifts by itself.']]);
   hu.appendChild(mk('div', 'msec', 'KEYBOARD'));
-  hu.appendChild(mk('div', 'mnote', 'WASD/arrows · Space drift · Shift boost · R reset to road · O autopilot · H handling · V next vehicle · G graphics · F FPS · I HUD mode · U edit HUD · Shift+U unload.'));
+  hu.appendChild(mk('div', 'mnote', 'WASD/arrows · Space drift · Shift boost · R reset to road · X / Z gear up / down (manual) · O autopilot · H handling · V next vehicle · G graphics · F FPS · I HUD mode · U edit HUD · Shift+U unload.'));
   // WORLD
   const w = $('mWorld'); w.innerHTML = '';
   segRows(w, [['TIME OF DAY', ['Auto', 'Day', 'Sunset', 'Night'], () => timeMode, v => { timeMode = v; localStorage.setItem('srroute_time', v); applyTime(); }],
@@ -649,7 +669,7 @@ function frame(now) {
   $('carinfo').textContent = (veh.damage >= 1 ? 'DMG ' + veh.damage.toFixed(0) + '%  ' : '') + (veh.cargo.capacity ? 'LOGS ' + veh.cargo.logs + '/' + veh.cargo.capacity : '');
   { const show = veh.cargo.capacity > 0 && veh.cargo.logs > 0; if (show !== unlShown) { unlShown = show; $('bUnl').style.display = show ? 'block' : 'none'; } if (show) $('bUnl').textContent = 'UNLOAD ' + veh.cargo.logs; }
   if (msgT > 0 && performance.now() >= msgT) { msgT = 0; $('msg').textContent = ''; $('msg').classList.remove('show'); }
-  updateTelemetry(); routeHud(dt); gauge(); updateLabels(dt); audio.hostTurbo = veh.__power && veh.__power.cfg.spool ? pwSpool : undefined; audio.frame(dt);
+  gearFlash = Math.max(0, gearFlash - dt); updateTelemetry(); routeHud(dt); gauge(); updateLabels(dt); audio.hostTurbo = veh.__power && veh.__power.cfg.spool ? pwSpool : undefined; audio.frame(dt);
   if (!QS.has('nopost')) { renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.render(postScene, postCam); }
   else { renderer.setRenderTarget(null); renderer.render(scene, camera); }
   stats.frameMs = performance.now() - t0;
@@ -678,7 +698,7 @@ function simFast(sec) {
 requestAnimationFrame(frame);
 // release identity from js/version.js (title, menu tag, versions link)
 document.title = GAME_NAME; { const t = document.getElementById('verTag'); if (t) t.textContent = 'V' + GAME_VERSION; const v = document.getElementById('versionsLink'); if (v) v.href = VERSIONS_URL; }
-window.__st = { version: GAME_NAME, renderer, U, get msgText() { return $("msg") ? $("msg").textContent : ""; }, PWR, get gripTest() { return gripTest; }, set gripTest(v) { gripTest = v; }, get vSub() { return vSub; }, openPower: () => { openMenu(true, 'vehicle'); vSub = 'power'; vehRow(); }, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
+window.__st = { version: GAME_NAME, renderer, U, get gearbox() { return gbMode; }, setGearbox, manualShift, get inp() { return inp; }, get msgText() { return $("msg") ? $("msg").textContent : ""; }, PWR, get gripTest() { return gripTest; }, set gripTest(v) { gripTest = v; }, get vSub() { return vSub; }, openPower: () => { openMenu(true, 'vehicle'); vSub = 'power'; vehRow(); }, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
   get q() { return qName; }, setQ(q) { qName = q; applyQuality(); }, get x() { return veh.p.x; }, get z() { return veh.p.z; }, get y() { return veh.p.y; },
   place(x, z, yaw = 0) { spawn(x, z, yaw); }, teleport(x, z, yaw = 0) { spawn(x, z, yaw); updateWorld(true); }, toBiome(name, yaw = 0) { const p = T.findBiome(name, veh.p.x, veh.p.z); if (p) this.teleport(p.x, p.z, yaw); return p; },
   toS(s, d = 3) { const p = lanePoint(Math.max(0, s), d); spawn(p.x, p.z, p.yaw); camPos.set(veh.p.x - Math.sin(p.yaw) * 10, veh.p.y + 4, veh.p.z - Math.cos(p.yaw) * 10); odoX = veh.p.x; odoZ = veh.p.z; rebase(); odoX = veh.p.x; odoZ = veh.p.z; sCur = Math.max(0, W.project(veh.p.x, veh.p.z).s); W.setFocus(sCur); props.update(sCur); updateWorld(true); return p; },
