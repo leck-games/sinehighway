@@ -11,7 +11,7 @@ class Grid {
   constructor(scene, N, step, mat, withTex) {
     const n = this.n = N + 1; this.N = N; this.step = step;
     this.H = new Float32Array(n * n); this.NRM = new Float32Array(n * n * 3); this.COL = new Float32Array(n * n * 3); this.SW = new Float32Array(n * n * 4); this.CW = new Float32Array(n * n); this.TN = new Float32Array(n * n * 3);
-    this.gi0 = this.gj0 = null;
+    this.gi0 = this.gj0 = null; this.goi = this.goj = 0; this.posDirty = false; // goi/goj: floating-origin cell offset (global = local + go)
     const g = this.geo = new THREE.BufferGeometry();
     this.pos = new Float32Array(n * n * 3); this.nor = new Float32Array(n * n * 3); this.col = new Float32Array(n * n * 3); this.sw = new Float32Array(n * n * 4); this.cw = new Float32Array(n * n); this.tn = new Float32Array(n * n * 3);
     g.setAttribute('cw', new THREE.BufferAttribute(this.cw, 1)); g.setAttribute('tn', new THREE.BufferAttribute(this.tn, 3)); // HILLS: tunnel flag / floor / height (portal hole)
@@ -24,10 +24,12 @@ class Grid {
     if (withTex) { this.tdata = new Float32Array(n * n * 4); this.tex = new THREE.DataTexture(this.tdata, n, n, THREE.RGBAFormat, THREE.FloatType); this.tex.minFilter = this.tex.magFilter = THREE.NearestFilter; this.tex.needsUpdate = true; }
   }
   ri(g) { const n = this.n; return ((g % n) + n) % n; }
+  rx(g) { return this.ri(g + this.goi); } rz(g) { return this.ri(g + this.goj); }
+  shift(dx, dz) { const s = this.step; if (this.gi0 === null) return; this.goi += dx / s; this.goj += dz / s; this.gi0 -= dx / s; this.gj0 -= dz / s; this.posDirty = true; }
   compute(gi, gj) {
-    const s = this.step, x = gi * s, z = gj * s, k = this.ri(gj) * this.n + this.ri(gi);
+    const s = this.step, x = gi * s, z = gj * s, k = this.rz(gj) * this.n + this.rx(gi);
     sample(x, z, SO); normal(x, z, nv); const surf = surfaceOf(x, z, SO, nv[1]); colourOf(x, z, SO, nv[1], surf, cv);
-    const j = 0.94 + 0.12 * hash2(gi, gj, 3);
+    const j = 0.94 + 0.12 * hash2(gi + this.goi, gj + this.goj, 3);
     // ROADS OVER TERRAIN (local): a grid triangle that overlaps a road ribbon has all its vertices within ~1.5 grid steps of the road edge;
     // keeping those vertices at or under the road bed means linear interpolation between them can never poke through the ribbon
     // (mattered most on the 16 m far grid, where cut slopes covered distant roads). Physics still uses the exact world.sample().
@@ -44,13 +46,13 @@ class Grid {
   }
   update(px, pz, force) {
     const N = this.N, n = this.n, s = this.step, gi0 = Math.round(px / s) - N / 2, gj0 = Math.round(pz / s) - N / 2;
-    if (!force && gi0 === this.gi0 && gj0 === this.gj0) return false;
+    if (!force && !this.posDirty && gi0 === this.gi0 && gj0 === this.gj0) return false; this.posDirty = false;
     const o0 = this.gi0, p0 = this.gj0, fresh = o0 === null || force;
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const gi = gi0 + i, gj = gj0 + j; if (fresh || gi < o0 || gi > o0 + N || gj < p0 || gj > p0 + N) this.compute(gi, gj); }
     this.gi0 = gi0; this.gj0 = gj0;
     let v = 0;
-    for (let j = 0; j < n; j++) { const rj = this.ri(gj0 + j) * n; for (let i = 0; i < n; i++, v++) {
-      const k = rj + this.ri(gi0 + i), v3 = v * 3, k3 = k * 3;
+    for (let j = 0; j < n; j++) { const rj = this.rz(gj0 + j) * n; for (let i = 0; i < n; i++, v++) {
+      const k = rj + this.rx(gi0 + i), v3 = v * 3, k3 = k * 3;
       this.pos[v3] = (gi0 + i) * s; this.pos[v3 + 1] = this.H[k]; this.pos[v3 + 2] = (gj0 + j) * s;
       this.nor[v3] = this.NRM[k3]; this.nor[v3 + 1] = this.NRM[k3 + 1]; this.nor[v3 + 2] = this.NRM[k3 + 2];
       this.col[v3] = this.COL[k3]; this.col[v3 + 1] = this.COL[k3 + 1]; this.col[v3 + 2] = this.COL[k3 + 2];
@@ -73,14 +75,14 @@ function createGrass(scene, grid, { count = 12000, tile = 72 } = {}) {
   for (let i = 0; i < count; i++) { off[i * 4] = Math.random() * tile; off[i * 4 + 1] = Math.random() * tile; off[i * 4 + 2] = Math.random(); off[i * 4 + 3] = Math.random() * 6.283; }
   geo.setAttribute('off', new THREE.InstancedBufferAttribute(off, 4)); geo.instanceCount = count; geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...U, uTex: { value: grid.tex }, uN: { value: grid.n }, uStep: { value: grid.step }, uTile: { value: tile }, uCenter: { value: new THREE.Vector2() } },
+    uniforms: { ...U, uTex: { value: grid.tex }, uN: { value: grid.n }, uStep: { value: grid.step }, uTile: { value: tile }, uCenter: { value: new THREE.Vector2() }, uGo: { value: new THREE.Vector2() } },
     side: THREE.DoubleSide,
     vertexShader: /* glsl */`
       precision highp float; precision highp sampler2D;
-      attribute vec4 off; uniform sampler2D uTex; uniform float uN, uStep, uTile, uTime; uniform vec2 uCenter;
+      attribute vec4 off; uniform sampler2D uTex; uniform float uN, uStep, uTile, uTime; uniform vec2 uCenter, uGo;
       ` + GLSL_ENV + /* glsl */`
       varying vec3 vCol; varying float vY; varying vec3 vW; varying vec3 vF;
-      vec4 tx(float gi, float gj) { return texelFetch(uTex, ivec2(int(mod(gi, uN)), int(mod(gj, uN))), 0); }
+      vec4 tx(float gi, float gj) { return texelFetch(uTex, ivec2(int(mod(gi + uGo.x, uN)), int(mod(gj + uGo.y, uN))), 0); }
       void main() {
         vec2 w = off.xy + uTile * floor((uCenter - off.xy) / uTile + 0.5);
         float dist = length(w - uCenter);
@@ -128,7 +130,7 @@ function createGrass(scene, grid, { count = 12000, tile = 72 } = {}) {
       }`,
   });
   const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; scene.add(mesh);
-  return { mesh, update(cx, cz) { mat.uniforms.uCenter.value.set(cx, cz); } };
+  return { mesh, update(cx, cz) { mat.uniforms.uCenter.value.set(cx, cz); const n = grid.n; mat.uniforms.uGo.value.set(((grid.goi % n) + n) % n, ((grid.goj % n) + n) % n); } };
 }
 export function createGround(scene, { small = false, grassCount, nearN, farN } = {}) { // nearN/farN: graphics-level grid sizes (load time)
   const NEAR_N = nearN || (small ? 112 : 128), NEAR_S = 4, FAR_N = farN || (small ? 80 : 96), FAR_S = 16;
@@ -144,6 +146,7 @@ export function createGround(scene, { small = false, grassCount, nearN, farN } =
   const grass = createGrass(scene, near, { count: grassCount ?? (small ? 11000 : 16000), tile: 72 });
   return {
     near, far, farDist, roads, grass, meshes: [near.mesh, far.mesh, waterN, waterF, ...roads.meshes, grass.mesh],
+    shift(dx, dz) { near.shift(dx, dz); far.shift(dx, dz); roads.shift && roads.shift(dx, dz); },
     update(px, pz, force) {
       near.update(px, pz, force); far.update(px, pz, force);
       uNear.value.set((near.gi0 + near.N / 2) * near.step, (near.gj0 + near.N / 2) * near.step, near.N * near.step / 2);

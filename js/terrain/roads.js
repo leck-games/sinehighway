@@ -1,7 +1,7 @@
 // Road meshes: ribbons generated along the same math paths used by world.height() (road graph edges + race loops).
 // Asphalt highways get edge lines + dashed centre line, dirt trails/loops get wheel ruts; bridges get a deck slab, rails and pillars.
 import * as THREE from 'three';
-import { pathsNear, pathPoint, PP, HWY, LOOP, WATER, TUN_H, TUN_W, rimSpan } from './world.js';
+import { project, routePoint, featuresIn, naturalHeight, PP, ROAD_HW, WATER, TUN_H, TUN_W } from './world.js';
 import { asphaltHD, dirtHD } from './roadhd.js';
 
 function canvasTex(draw) {
@@ -12,9 +12,9 @@ function noise(g, base, amp, n = 900) { g.fillStyle = base; g.fillRect(0, 0, 64,
 export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', tex) -> material (comic shaders from main.js)
   const asphaltTex = canvasTex(g => {
     noise(g, '#45464b', 0.25);
-    g.fillStyle = '#eee'; g.fillRect(3, 0, 3, 256); g.fillRect(58, 0, 3, 256);
-    g.fillStyle = '#f2c230'; g.fillRect(30.5, 0, 3, 140);
-    g.fillStyle = 'rgba(238,238,238,0.85)'; g.fillRect(16, 0, 2, 90); g.fillRect(46, 0, 2, 90); // lane dashes: the 24 m highway reads as 2 lanes each way
+    g.fillStyle = 'rgba(70,68,62,0.55)'; g.fillRect(0, 0, 9, 256); g.fillRect(55, 0, 9, 256); // shoulders
+    g.fillStyle = '#eee'; g.fillRect(9, 0, 3, 256); g.fillRect(52, 0, 3, 256);       // edge lines
+    g.fillStyle = '#f2c230'; g.fillRect(30.5, 0, 3, 110);                              // dashed centre line: two-lane highway
   });
   const dirtTex = canvasTex(g => {
     noise(g, '#9a7652', 0.3, 1400);
@@ -29,50 +29,42 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
   const meshes = [new THREE.Mesh(new THREE.BufferGeometry(), matA), new THREE.Mesh(new THREE.BufferGeometry(), matD), new THREE.Mesh(new THREE.BufferGeometry(), matB), new THREE.Mesh(new THREE.BufferGeometry(), matT)];
   meshes.forEach(m => { m.frustumCulled = false; scene.add(m); });
   meshes[1].renderOrder = 1; meshes[0].renderOrder = 2; // trails first, asphalt last (wins ties at crossings)
-  let lx = 1e9, lz = 1e9; const RAD = 650, STEP = 5;
+  let lx = 1e9, lz = 1e9; const RAD = 700, STEP = 4, hw = ROAD_HW;
   function build(px, pz) {
     const buf = [{ p: [], uv: [], idx: [], nr: [] }, { p: [], uv: [], idx: [], nr: [] }, { p: [], n: [], idx: [] }, { p: [], c: [], idx: [] }];
-    const paths = pathsNear(px, pz, RAD);
-    for (const e of paths) {
-      const len = e.len, n = Math.ceil(len / STEP), b = buf[e.type === HWY ? 0 : 1], hw = e.hw;
-      // RIM HIGHWAY (69 km): only its t-window around the player is walked (streamed with the rest of the roads, no upfront mesh)
-      const sp = e.rim ? rimSpan(px, pz, RAD) : null, i0 = sp ? Math.floor(sp[0] * n) : 0, i1 = sp ? Math.ceil(sp[1] * n) : n;
-      let run = -1, vlen = sp ? i0 * len / n : 0, prev = null, tprev = null;
-      for (let i = i0; i <= i1; i++) {
-        const t = sp ? ((i / n) % 1 + 1) % 1 : i / n; pathPoint(e, t);
-        const dx = PP.x - px, dz = PP.z - pz, inside = dx * dx + dz * dz < RAD * RAD;
-        if (!inside) { run = -1; prev = null; continue; }
-        const bank = PP.bank; // cross slope from world.js (RIM: NASCAR superelevation up to ~26 deg, edges: gentle crown)
-        const nx = -PP.tz, nz = PP.tx, y = PP.y + (e.type === HWY ? 0.16 : 0.08); // normal (left)
-        const base = b.p.length / 3;
-        b.p.push(PP.x + nx * hw, y + hw * bank, PP.z + nz * hw, PP.x - nx * hw, y - hw * bank, PP.z - nz * hw);
-        vlen += prev ? Math.hypot(PP.x - prev[0], PP.z - prev[1]) : 0; prev = [PP.x, PP.z];
-        b.uv.push(0, vlen / 14, 1, vlen / 14);
-        const il = 1 / Math.hypot(1, bank); b.nr.push(-nx * bank * il, il, -nz * bank * il, -nx * bank * il, il, -nz * bank * il); // tilted normal on the banked RIM
-        if (run >= 0) b.idx.push(base - 2, base, base - 1, base - 1, base, base + 1);
-        run = base;
-        if (PP.bridge) addBridge(buf[2], e, t, len / n, hw, nx, nz, PP.x, PP.y, PP.z, i);
-        if ((PP.tun > 0) !== !!tprev && e.tn) { // tube enters/leaves between the previous and this station: put a ring exactly at the portal
-          const s1 = (t || (sp ? 1 : 0)) * len, s0 = s1 - len / n, tt = e.tn.find(q => (q.s0 > s0 - 1e-6 && q.s0 <= s1) || (q.s1 >= s0 && q.s1 < s1 + 1e-6));
-          if (tt) { const sP = tt.s0 > s0 - 1e-6 && tt.s0 <= s1 ? tt.s0 : tt.s1; pathPoint(e, sP / len); PP.tun = Math.max(PP.tun, 0.01); tprev = addTube(buf[3], e, hw, -PP.tz, PP.tx, tprev, vlen); pathPoint(e, t); if (!(PP.tun > 0)) tprev = null; }
-        }
-        if (PP.tun > 0) tprev = addTube(buf[3], e, hw, nx, nz, tprev, vlen); else tprev = null;
-      }
-      if (e.tn) for (const tt of e.tn) for (const sP of [tt.s0, tt.s1]) if (sP >= 0 && sP <= len) { pathPoint(e, sP / len); if ((PP.x - px) ** 2 + (PP.z - pz) ** 2 < RAD * RAD) addPortal(buf[3], e, sP); }
+    const sp = project(px, pz).s, s0 = Math.max(-2000, sp - RAD), s1 = sp + RAD, vo = Math.floor(s0 / 1400) * 1400, b = buf[0];
+    const feats = featuresIn(s0, s1), st = [];
+    for (let s = Math.floor(s0 / STEP) * STEP; s <= s1; s += STEP) st.push(s);
+    for (const f of feats) if (f.type === 'tun') for (const q of [f.s0, f.s1]) if (q > s0 && q < s1) st.push(q - 0.001, q + 0.001);
+    st.sort((a, c) => a - c);
+    let run = -1, tprev = null, i = 0;
+    for (const s of st) {
+      routePoint(s); i++;
+      const bank = PP.bank, nx = -PP.tz, nz = PP.tx, y = PP.y + 0.16, base = b.p.length / 3; // normal (left)
+      b.p.push(PP.x + nx * hw, y + hw * bank, PP.z + nz * hw, PP.x - nx * hw, y - hw * bank, PP.z - nz * hw);
+      const v = (s - vo) / 14; b.uv.push(0, v, 1, v);
+      const il = 1 / Math.hypot(1, bank); b.nr.push(-nx * bank * il, il, -nz * bank * il, -nx * bank * il, il, -nz * bank * il);
+      if (run >= 0) b.idx.push(base - 2, base, base - 1, base - 1, base, base + 1);
+      run = base;
+      if (PP.bridge && Math.round(s) % STEP === 0) addBridge(buf[2], STEP, hw, nx, nz, PP.x, PP.y, PP.z, Math.round(s / STEP));
+      if (PP.tun > 0) tprev = addTube(buf[3], hw, nx, nz, tprev, s); else tprev = null;
     }
+    for (const f of feats) if (f.type === 'tun') for (const q of [f.s0, f.s1]) if (q > s0 && q < s1) addPortal(buf[3], q, q === f.s0 ? 1 : -1);
     for (let k = 0; k < 2; k++) {
-      const g = new THREE.BufferGeometry(), b = buf[k];
-      g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
-      g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nr, 3));
-      g.setIndex(b.idx); meshes[k].geometry.dispose(); meshes[k].geometry = g;
+      const g = new THREE.BufferGeometry(), bb = buf[k];
+      g.setAttribute('position', new THREE.Float32BufferAttribute(bb.p, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(bb.uv, 2));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(bb.nr, 3));
+      g.setIndex(bb.idx); meshes[k].geometry.dispose(); meshes[k].geometry = g;
     }
-    let g = new THREE.BufferGeometry(); const b = buf[2];
-    g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3)); g.setIndex(b.idx); g = g.toNonIndexed(); g.computeVertexNormals(); // flat-shaded boxes for crisp ink edges
+    let g = new THREE.BufferGeometry(); const bb = buf[2];
+    g.setAttribute('position', new THREE.Float32BufferAttribute(bb.p, 3)); g.setIndex(bb.idx); g = g.toNonIndexed(); g.computeVertexNormals(); // flat-shaded boxes for crisp ink edges
     meshes[2].geometry.dispose(); meshes[2].geometry = g;
     g = new THREE.BufferGeometry(); const bt = buf[3];
     g.setAttribute('position', new THREE.Float32BufferAttribute(bt.p, 3)); g.setAttribute('tc', new THREE.Float32BufferAttribute(bt.c, 4)); g.setIndex(bt.idx); g = g.toNonIndexed(); g.computeVertexNormals();
     meshes[3].geometry.dispose(); meshes[3].geometry = g;
+    stats.stations = st.length; stats.s0 = s0; stats.s1 = s1;
   }
+  const stats = { stations: 0, s0: 0, s1: 0 };
   // bridge pieces: slab under the deck, side rails, a pillar every ~25 m
   function box(b, cx, cy, cz, ax, az, hx, hy, hz) { // oriented box: (ax,az) = forward dir
     const lx = -az, lz = ax, base = b.p.length / 3;
@@ -84,8 +76,8 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
   // concrete portal headwalls (hide the terrain seam at the mouth). Returns the ring for the next station.
   const TUBE = (W, H) => [[W, -1.2], [W, H - 1.6], [W - 1.6, H], [1.6 - W, H], [-W, H - 1.6], [-W, -1.2]];
   function quad(b, a, c, d, f, col, em) { const base = b.p.length / 3; b.p.push(...a, ...c, ...d, ...f); for (let k = 0; k < 4; k++) b.c.push(col[0], col[1], col[2], em); b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3); }
-  function addTube(b, e, hw, nx, nz, prev, vlen) {
-    const H = TUN_H[e.type], W = hw + TUN_W - 0.2, y = PP.y, dk = 1 - 0.45 * Math.min(1, PP.tun / 30);
+  function addTube(b, hw, nx, nz, prev, vlen) {
+    const H = TUN_H, W = hw + TUN_W - 0.2, y = PP.y, dk = 1 - 0.45 * Math.min(1, PP.tun / 30);
     const ring = TUBE(W, H).map(([l, v]) => [PP.x + nx * l, y + v, PP.z + nz * l]);
     const col = [0.56 * dk, 0.54 * dk, 0.5 * dk], roof = [0.36 * dk, 0.35 * dk, 0.34 * dk];
     if (prev) {
@@ -97,8 +89,8 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
     }
     return { ring, vlen };
   }
-  function addPortal(b, e, sP) { // concrete headwall + hazard stripe at a tunnel mouth
-    pathPoint(e, sP / e.len); const nx = -PP.tz, nz = PP.tx, H = TUN_H[e.type], W = e.hw + TUN_W - 0.2, y = PP.y;
+  function addPortal(b, sP) { // concrete headwall + hazard stripe at a tunnel mouth
+    routePoint(sP); const nx = -PP.tz, nz = PP.tx, H = TUN_H, W = ROAD_HW + TUN_W - 0.2, y = PP.y;
       const box2 = (l0, l1, v0, v1, col, th = 0.6) => { const P = (l, v, f) => [PP.x + nx * l + PP.tx * f, y + v, PP.z + nz * l + PP.tz * f];
         quad(b, P(l0, v0, -th), P(l1, v0, -th), P(l1, v1, -th), P(l0, v1, -th), col, 0); quad(b, P(l0, v0, th), P(l0, v1, th), P(l1, v1, th), P(l1, v0, th), col, 0);
         quad(b, P(l0, v1, -th), P(l1, v1, -th), P(l1, v1, th), P(l0, v1, th), col, 0); quad(b, P(l0, v0, -th), P(l0, v1, -th), P(l0, v1, th), P(l0, v0, th), col, 0); quad(b, P(l1, v0, -th), P(l1, v1, -th), P(l1, v1, th), P(l1, v0, th), col, 0); };
@@ -106,12 +98,12 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
       box2(W, W + 4.5, -3, H + 2.2, cc); box2(-W - 4.5, -W, -3, H + 2.2, cc); box2(-W, W, H, H + 2.2, cc); box2(-W - 0.02, W + 0.02, H - 0.05, H + 0.7, st, 0.68);
       }
   const fl = Math.floor;
-  function addBridge(b, e, t, ds, hw, nx, nz, x, y, z, i) {
+  function addBridge(b, ds, hw, nx, nz, x, y, z, i) {
     const ax = nz, az = -nx; // forward = tangent
     box(b, x, y - 0.6, z, PP.tx, PP.tz, hw + 0.6, 0.55, ds * 0.5 + 0.05);
     box(b, x + nx * (hw + 0.4), y + 0.6, z + nz * (hw + 0.4), PP.tx, PP.tz, 0.15, 0.5, ds * 0.5 + 0.05);
     box(b, x - nx * (hw + 0.4), y + 0.6, z - nz * (hw + 0.4), PP.tx, PP.tz, 0.15, 0.5, ds * 0.5 + 0.05);
-    if (i % 5 === 0) { const bot = WATER - 4, h = (y - 1.1 - bot) / 2; if (h > 0.5) box(b, x, bot + h, z, PP.tx, PP.tz, hw * 0.7, h, 0.8); }
+    if (i % 6 === 0) { const bot = Math.min(naturalHeight(x, z), y - 1) - 2, h = (y - 1.1 - bot) / 2; if (h > 0.5) box(b, x, bot + h, z, PP.tx, PP.tz, hw * 0.7, h, 0.8); }
   }
   // graphics detail: 0 = classic 64x256 canvases (LOW/MED), 1 = HIGH (512x1024), 2 = ULTRA (1024x2048) + normal/roughness maps, max anisotropy, mipmaps
   const hd = {}; let detail = 0;
@@ -126,11 +118,12 @@ export function createRoads(scene, mk) { // mk(kind:'asphalt'|'dirt'|'bridge', t
     for (const t of [asphaltTex, dirtTex]) { t.anisotropy = level ? aniso : 4; t.needsUpdate = true; }
     const set = (m, map, nmap, vs) => { m.uniforms.map.value = map; m.uniforms.nmap.value = nmap; m.uniforms.uHD.value = nmap ? 1 : 0; m.uniforms.uVS.value = vs; };
     if (!h) { set(matA, asphaltTex, null, 1); set(matD, dirtTex, null, 1); }
-    else { set(matA, h.tex[0], h.tex[1], 14 / 48); set(matD, h.tex[2], h.tex[3], h.d.vs); }
+    else { set(matA, h.tex[0], h.tex[1], 14 / 24); set(matD, h.tex[2], h.tex[3], h.d.vs); }
     return detail;
   }
   return {
     meshes, setDetail, get detail() { return detail; }, get hdStats() { const h = hd[detail]; return h ? { level: detail, size: h.a.w + 'x' + h.a.h, genMs: Math.round(h.ms) } : { level: 0 }; },
+    stats, shift() { lx = 1e9; },
     update(px, pz, force) { if (!force && Math.hypot(px - lx, pz - lz) < 140) return; lx = px; lz = pz; build(px, pz); },
   };
 }

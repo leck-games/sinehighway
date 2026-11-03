@@ -24,24 +24,23 @@ function finish(W, H, col, hgt, rough, bump) { // -> { col, nrm } RGBA byte arra
   }
   return { col: C, nrm: Nm, w: W, h: H };
 }
-export function asphaltHD(W, H) { // 24 m x 48 m
-  const r = rng(1234), ppm = W / 24, ny = H / 48, n6 = vgrid(4, 8, r), n1 = vgrid(24, 48, r), n03 = vgrid(80, 160, r), nw = vgrid(48, 96, r);
+export function asphaltHD(W, H) { // two-lane highway: 12 m across x 24 m along
+  const r = rng(1234), ppm = W / 12, ny = H / 24, n6 = vgrid(2, 4, r), n1 = vgrid(12, 24, r), n03 = vgrid(40, 80, r), nw = vgrid(24, 48, r);
   const px = m => m * ppm, py = m => m * ny;
   // repair patches + cracks (inked seams), lane paint
   const patches = [];
-  for (let k = 0; k < 7; k++) patches.push([1.5 + r() * 18, r() * 44, 1.2 + r() * 3.5, 1.5 + r() * 5]);
+  for (let k = 0; k < 4; k++) patches.push([1 + r() * 8, r() * 20, 1.2 + r() * 2.5, 1.5 + r() * 4]);
   const patch = mask(W, H, g => { for (const [x, y, w, h] of patches) g.fillRect(px(x), py(y), px(w), py(h)); });
   const seam = mask(W, H, g => { g.lineWidth = Math.max(1, ppm * 0.05); for (const [x, y, w, h] of patches) g.strokeRect(px(x), py(y), px(w), py(h)); });
   const crack = mask(W, H, g => { g.lineCap = 'round';
-    for (let k = 0; k < 26; k++) { let x = r() * 24, y = r() * 48, a = r() * 6.28; g.lineWidth = Math.max(1, ppm * (0.025 + r() * 0.03)); g.beginPath(); g.moveTo(px(x), py(y));
+    for (let k = 0; k < 13; k++) { let x = r() * 12, y = r() * 24, a = r() * 6.28; g.lineWidth = Math.max(1, ppm * (0.025 + r() * 0.03)); g.beginPath(); g.moveTo(px(x), py(y));
       const n = 6 + r() * 14; for (let i = 0; i < n; i++) { a += (r() - 0.5) * 1.6; x += Math.cos(a) * 0.35; y += Math.sin(a) * 0.35; g.lineTo(px(x), py(y)); if (r() < 0.12) { g.stroke(); g.beginPath(); g.moveTo(px(x), py(y)); a += (r() - 0.5) * 2.5; } } g.stroke(); }
     // alligator cracking near the edges
-    for (let k = 0; k < 10; k++) { const x0 = r() < 0.5 ? 0.4 + r() * 1.4 : 21.2 + r() * 2.4, y0 = r() * 46; g.lineWidth = Math.max(1, ppm * 0.03);
+    for (let k = 0; k < 6; k++) { const x0 = r() < 0.5 ? 0.3 + r() * 1.2 : 9.6 + r() * 1.2, y0 = r() * 22; g.lineWidth = Math.max(1, ppm * 0.03);
       for (let i = 0; i < 9; i++) { g.beginPath(); g.moveTo(px(x0 + r() * 1.4), py(y0 + r() * 2.5)); g.lineTo(px(x0 + r() * 1.4), py(y0 + r() * 2.5)); g.stroke(); } } });
-  const white = mask(W, H, g => { g.fillRect(px(1.0), 0, px(0.3), H); g.fillRect(px(22.7), 0, px(0.3), H); // edge lines
-    for (let y = 0; y < 48; y += 12) { g.fillRect(px(5.9), py(y), px(0.2), py(3)); g.fillRect(px(17.9), py(y), px(0.2), py(3)); } }); // lane dashes 3 m / 12 m
-  const yellow = mask(W, H, g => { g.fillRect(px(11.62), 0, px(0.2), H); g.fillRect(px(12.18), 0, px(0.2), H); }); // double centre line
-  const tracks = [2.9, 4.6, 8.0, 9.7, 14.3, 16.0, 19.4, 21.1];
+  const white = mask(W, H, g => { g.fillRect(px(0.55), 0, px(0.22), H); g.fillRect(px(11.23), 0, px(0.22), H); }); // edge lines
+  const yellow = mask(W, H, g => { g.fillRect(px(5.72), 0, px(0.16), H); g.fillRect(px(6.12), 0, px(0.16), H); }); // Route-66 double yellow centre line (one lane each way)
+  const tracks = [2.4, 4.1, 7.9, 9.6];
   const col = new Float32Array(W * H * 3), hgt = new Float32Array(W * H), rough = new Float32Array(W * H);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = y * W + x, mx = x / ppm, my = y / ny;
@@ -53,7 +52,7 @@ export function asphaltHD(W, H) { // 24 m x 48 m
     let tk = 0; for (const t of tracks) { const d = (mx - t) / 0.42; tk = Math.max(tk, Math.exp(-d * d)); }
     tk *= 0.75 + 0.25 * n1(mx * 2, my * 0.5); cr -= 0.05 * tk; cg -= 0.05 * tk; cb -= 0.045 * tk; ro -= 0.32 * tk; h -= 0.25 * tk * g;
     // oil stain down the middle of each lane
-    for (const lc of [3.75, 8.85, 15.15, 20.25]) { const d = Math.abs(mx - lc); if (d < 0.6) { const o = (1 - d / 0.6) * Math.max(0, n1(mx * 1.5, my * 0.7) - 0.45) * 1.6; cr -= 0.08 * o; cg -= 0.08 * o; cb -= 0.07 * o; ro -= 0.2 * o; } }
+    for (const lc of [3.25, 8.75]) { const d = Math.abs(mx - lc); if (d < 0.6) { const o = (1 - d / 0.6) * Math.max(0, n1(mx * 1.5, my * 0.7) - 0.45) * 1.6; cr -= 0.08 * o; cg -= 0.08 * o; cb -= 0.07 * o; ro -= 0.2 * o; } }
     // repair patches: darker newer asphalt, finer grain, inked seam
     const pa = patch[i]; if (pa > 0) { cr = cr * (1 - pa) + (0.2 + (g - 0.5) * 0.04) * pa; cg = cg * (1 - pa) + (0.205 + (g - 0.5) * 0.04) * pa; cb = cb * (1 - pa) + (0.225 + (g - 0.5) * 0.04) * pa; h += 0.3 * pa; ro -= 0.08 * pa; }
     const se = seam[i]; cr -= 0.13 * se; cg -= 0.13 * se; cb -= 0.13 * se; h -= 0.8 * se;
@@ -65,7 +64,7 @@ export function asphaltHD(W, H) { // 24 m x 48 m
     // cracks (ink-dark grooves) after the paint so they cut through it
     const ck = crack[i]; cr -= 0.2 * ck; cg -= 0.2 * ck; cb -= 0.2 * ck; h -= 1.4 * ck; ro += 0.1 * ck;
     // edge wear: crumbly lighter gravel + dirt at the very edge
-    const ed = Math.min(mx, 24 - mx), rag = 0.28 + 0.35 * n1(mx * 3, my * 3);
+    const ed = Math.min(mx, 12 - mx), rag = 0.28 + 0.35 * n1(mx * 3, my * 3);
     if (ed < rag) { const t = clamp01((rag - ed) / 0.12); cr += (0.5 - cr) * t; cg += (0.42 - cg) * t; cb += (0.33 - cb) * t; h -= 0.5 * t; ro = Math.max(ro, 0.95 * t + ro * (1 - t)); }
     else if (ed < 0.95) { const t = (0.95 - ed) / 0.7 * (g > 0.5 ? 1 : 0.5); cr += 0.06 * t; cg += 0.055 * t; cb += 0.04 * t; h += (g - 0.5) * t; }
     col[i * 3] = cr; col[i * 3 + 1] = cg; col[i * 3 + 2] = cb; hgt[i] = h; rough[i] = ro;

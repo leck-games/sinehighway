@@ -17,7 +17,7 @@ export const U = {
   uCloudK: { value: 1 }, uCloudH: { value: 260 }, uCanR: { value: new THREE.Vector2(250, 330) },
   uWetT: { value: dtex(2, 2, new Uint8Array(16)) }, uWetO: { value: new THREE.Vector4(-1e5, -1e5, 2e5, 0) },
   uFireT: { value: dtex(2, 2, new Uint8Array(16)) }, uFireO: { value: new THREE.Vector4(-1e5, -1e5, 1, 0) }, // origin xz, size, valid
-  uFlash: { value: 0 },
+  uFlash: { value: 0 }, uOrg: { value: new THREE.Vector2() }, // floating origin (world = local + uOrg) for world-anchored patterns
   // atmosphere (weather.js sets the sun; the host may grade them): true sun direction for the sky disc + glow (uSun = light dir,
   // clamped above the horizon, moon at night), warm sun/glow colour, haze strength 0..1, high cirrus amount (0 = off, cheap path)
   uSunD: { value: new THREE.Vector3(0.45, 0.75, 0.35).normalize() }, uSunCol: { value: new THREE.Color(1, 0.86, 0.62) }, uHaze: { value: 0.6 }, uCirrus: { value: 0 },
@@ -37,7 +37,7 @@ export function cnoise(u, v) {
   return 0.5 * S(u * 0.0021 + 1.7 * S(v * 0.0013)) * C(v * 0.0019 - 1.3 * S(u * 0.0011)) + 0.3 * S((u + v) * 0.0043 + 2.0 * C(u * 0.0023)) * C((u - v) * 0.0037) + 0.2 * S(u * 0.0091 + v * 0.0067 + 2.0 * S(v * 0.005));
 }
 export const GLSL_ENV = /* glsl */`
-uniform vec3 uWind, uCloudOff; uniform float uCloudK, uCloudH, uFlash; uniform sampler2D uClimT, uWetT, uFireT; uniform vec4 uClimO, uWetO, uFireO;
+uniform vec3 uWind, uCloudOff; uniform vec2 uOrg; uniform float uCloudK, uCloudH, uFlash; uniform sampler2D uClimT, uWetT, uFireT; uniform vec4 uClimO, uWetO, uFireO;
 float cnoise(vec2 p){ float u = p.x, v = p.y;
   return 0.5*sin(u*0.0021 + 1.7*sin(v*0.0013))*cos(v*0.0019 - 1.3*sin(u*0.0011)) + 0.3*sin((u+v)*0.0043 + 2.0*cos(u*0.0023))*cos((u-v)*0.0037) + 0.2*sin(u*0.0091 + v*0.0067 + 2.0*sin(v*0.005)); }
 float climF(vec2 xz){ return texture2D(uClimT, clamp((xz - uClimO.xy) / uClimO.z, 0.0, 1.0)).r; }
@@ -120,7 +120,7 @@ export function gridTerrainMat({ far = false, uNear = null } = {}) {
         vW = p; vN = normal; vC = color; vS = sw; vCw = cw; vTn = tn; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.); }`,
     fragmentShader: COMIC + `uniform vec2 uCanR; varying vec3 vW; varying vec3 vN; varying vec3 vC; varying vec4 vS; varying float vCw; varying vec3 vTn;
       void main(){
-        vec3 N = normalize(vN); float x = vW.x, z = vW.z, h = vW.y;
+        vec3 N = normalize(vN); float x = vW.x + uOrg.x, z = vW.z + uOrg.y, h = vW.y;
         if (vTn.x > 0.02) { float tf = vTn.y / vTn.x; if (h > tf - 0.4 && h < tf + vTn.z / vTn.x) discard; } // HILLS: portal hole (slanted grid faces across the tunnel mouth)
         vec3 c = vC;
         float gW = clamp(1. - vS.x - vS.y - vS.z - vS.w, 0., 1.);
@@ -142,7 +142,7 @@ export function gridTerrainMat({ far = false, uNear = null } = {}) {
         #ifndef FAR
         if (uDet > 0.001) { // HIGH/ULTRA: close-range micro grain (pebbles / soil clods / grass blades), fades out by ~150 m
           float dd = length(vW - cameraPosition), kd = uDet * (1. - smoothstep(25., 150., dd));
-          if (kd > 0.001) { vec2 cc = floor(vW.xz * 5.); float g1 = fract(sin(dot(cc, vec2(12.9898, 78.233))) * 43758.5453);
+          if (kd > 0.001) { vec2 cc = floor((vW.xz + uOrg) * 5.); float g1 = fract(sin(dot(cc, vec2(12.9898, 78.233))) * 43758.5453);
             float g2 = sin(x*4.3 + sin(z*3.1)*2.) * sin(z*3.7 + sin(x*2.9)*2.);
             c *= 1. + kd * ((g1 - .5) * 0.16 + step(0.55, g2) * 0.07 - step(0.93, g1) * 0.12); }
         }
@@ -193,9 +193,9 @@ export function waterMat({ far = false, uNear = null } = {}) {
         float d = max(vD, 0.);
         vec3 c = mix(vec3(.35,.88,.92), vec3(.10,.42,.82), smoothstep(0.5, 8., d));
         c = mix(c, vec3(.05,.28,.65), smoothstep(10., 30., d));
-        float ring = step(0.82, fract(d * 0.6 - uTime * 0.25 + 0.15 * sin(vW.x*0.08 + vW.z*0.05))) * (1. - smoothstep(1.5, 3.5, d));
+        float ring = step(0.82, fract(d * 0.6 - uTime * 0.25 + 0.15 * sin((vW.x+uOrg.x)*0.08 + (vW.z+uOrg.y)*0.05))) * (1. - smoothstep(1.5, 3.5, d));
         float foam = max(1. - smoothstep(0.25, 0.45, d), ring);
-        vec3 N = normalize(vec3(0.15*sin(vW.x*0.13 + uTime*1.3) + 0.1*sin(vW.z*0.21 - uTime), 1., 0.15*cos(vW.z*0.11 + uTime*1.1)));
+        vec3 N = normalize(vec3(0.15*sin((vW.x+uOrg.x)*0.13 + uTime*1.3) + 0.1*sin((vW.z+uOrg.y)*0.21 - uTime), 1., 0.15*cos((vW.z+uOrg.y)*0.11 + uTime*1.1)));
         vec3 V = normalize(cameraPosition - vW); float sp = dot(reflect(-uSun, N), V);
         c = mix(c, vec3(1.), step(0.985, sp));
         c = mix(c, vec3(.97,1.,1.), foam);

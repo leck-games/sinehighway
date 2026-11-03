@@ -1,9 +1,9 @@
 {
- "name": "Sine Rally V0.2-dev",
- "short_name": "Sine Rally V0.2-dev",
- "description": "Sine Rally V0.2-dev: open-world comic rally with a customizable touch HUD, planes, race rings and a 360° compass",
- "id": "./?app=sinerally-ui",
- "start_url": "./?app=sinerally-ui",
+ "name": "Sine Rally Route V0.1",
+ "short_name": "Sine Rally Route V0.1",
+ "description": "Sine Rally Route V0.1: an endless, curvy Route-66-style comic drive through prairie, red-rock desert, pine forest, snowy mountains and coast",
+ "id": "./?app=sinerally-route",
+ "start_url": "./?app=sinerally-route",
  "scope": "./",
  "display": "fullscreen",
  "display_override": [

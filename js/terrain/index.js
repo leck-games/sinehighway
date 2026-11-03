@@ -9,7 +9,7 @@ import { createFire, FIRE_CELL } from './fire.js';
 import { createWeather } from './weather.js';
 
 const sst = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-const BASE_DRY = [0.86, 0.93, 0.22, 0.97, 0.82, 0.38];
+const BASE_DRY = [0.84, 0.95, 0.24, 0.38, 0.5]; // prairie, desert, forest, mountains, coast
 
 export { W as world, U as uniforms, SPECIES };
 export function createTerrain({ bus = null, small = false, grassCount, persistKey = null, nearN, farN, treeNearR } = {}) {
@@ -25,8 +25,7 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
   const weather = createWeather({ heightAt, emit });
   // dryness 0..1: biome base, wetter near rivers / low ground, minus current wetness (rain)
   function drynessOf(o, x, z, wet) {
-    const rem = Math.max(0, 1 - o.bg - o.bs - o.bf), d = o.dom, rb = d === W.REG.DUNES ? BASE_DRY[3] : d === W.REG.CANYON ? BASE_DRY[4] : d === W.REG.ALPINE ? BASE_DRY[5] : 0.6;
-    let dry = (o.bg * BASE_DRY[0] + o.bs * BASE_DRY[1] + o.bf * BASE_DRY[2] + rem * rb) / Math.max(1e-3, o.bg + o.bs + o.bf + rem);
+    let dry = (o.bg * BASE_DRY[0] + o.bs * BASE_DRY[1] + o.bf * BASE_DRY[2] + o.bm * BASE_DRY[3] + o.bc * BASE_DRY[4]) / Math.max(1e-3, o.bg + o.bs + o.bf + o.bm + o.bc);
     dry *= 0.35 + 0.65 * sst(4, 45, o.riv); if (o.h < 1.5) dry *= 0.3;
     dry += 0.04 * Math.sin(x * 0.021 + Math.cos(z * 0.017) * 2);
     return Math.max(0, Math.min(1, dry * (1 - 0.85 * wet)));
@@ -34,7 +33,7 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
   // static fuel (without rain): only dry grassland + savanna grass; never on roads, water/mud, rock, sand, snow, forest
   function fuelAt(x, z) {
     const o = W.sample(x, z, SOf); if (o.road > 0.15 || o.h < W.WATER + 0.6 || o.riv < 6 || o.deck > -1e8) return 0;
-    const g = o.bg + o.bs; if (g < 0.25) return 0;
+    const g = o.bg + 0.4 * o.bs; if (g < 0.25) return 0;
     const surf = W.surfaceOf(x, z, o, 0.9); if (surf !== W.SURF.GRASS && surf !== W.SURF.DIRT) return 0;
     return Math.min(1, g * 1.2) * sst(0.55, 0.75, drynessOf(o, x, z, 0)) * (surf === W.SURF.DIRT ? 0.35 : 1);
   }
@@ -44,7 +43,7 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
     out.biome = b; out.biomeName = W.BIOME_NAMES[b]; out.surface = surf; out.surfaceName = W.SURF_NAMES[surf];
     out.dryness = drynessOf(o, x, z, wet); out.wet = wet; out.grip = P.mu * (1 - 0.25 * wet) * (f.burning ? 0.95 : 1); out.roll = P.roll; out.bs = P.bs;
     out.road = tin ? 1 : o.road; out.water = !tin && o.h < W.WATER ? W.WATER - o.h : 0; out.height = tin ? tfl : o.deck > o.h ? o.deck : o.h; out.normal = [nv[0], nv[1], nv[2]];
-    out.burning = f.burning; out.burnt = f.burnt; out.rain = weather.rainAt(x, z); out.weights = { grassland: o.bg, savanna: o.bs, forest: o.bf };
+    out.burning = f.burning; out.burnt = f.burnt; out.rain = weather.rainAt(x, z); out.weights = { prairie: o.bg, desert: o.bs, forest: o.bf, mountains: o.bm, coast: o.bc };
     return out;
   }
   const trees = createTrees({ fuelAt, heightAt, emit, ...(treeNearR != null ? { nearR: treeNearR } : {}) });
@@ -83,7 +82,7 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
   // find nearest point of a biome (spiral search on a coarse grid)
   function findBiome(name, x0 = 0, z0 = 0, { minW = 0.85, maxR = 9000 } = {}) {
     const b = typeof name === 'number' ? name : W.BIOME_NAMES.indexOf(name); if (b < 0) throw new Error('unknown biome ' + name);
-    const BWt = new Float32Array(6), o = {};
+    const BWt = new Float32Array(5), o = {};
     for (let r = 0; r <= maxR; r += 60) { const n = Math.max(1, Math.round(2 * Math.PI * r / 60));
       for (let k = 0; k < n; k++) { const a = k / n * 2 * Math.PI, x = x0 + Math.cos(a) * r, z = z0 + Math.sin(a) * r; W.biomeWeights(x, z, BWt);
         if (BWt[b] >= minW) { W.sample(x, z, o); if (o.h > 2 && o.road < 0.05 && o.riv > 20) return { x, z }; } } }
@@ -92,6 +91,14 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
   return {
     heightAt, normalAt, surfaceAt, fuelAt, groundAt: W.groundRef, roadGroundAt: W.roadGround, setRef: W.setRef, tunnelAt, dryness: (x, z) => drynessOf(W.sample(x, z, SO), x, z, weather.wetAt(x, z)),
     biomeAt: (x, z) => W.BIOME_NAMES[W.biomeOf(W.sample(x, z, SO))], findBiome,
+    // floating origin: world.js origin moves by (dx,dz); every cached world-space thing re-expresses itself in the new local frame.
+    // Fire is a toroidal 3 m window that cannot shift by 720 m exactly, so active fires/scorch are cleared on a rebase.
+    shiftOrigin(dx, dz, cx = 0, cz = 0) {
+      W.shiftOrigin(dx, dz); const o = W.origin(); U.uOrg.value.set(o.x, o.z);
+      if (ground) ground.shift(dx, dz); trees.shift(dx, dz, cx, cz); weather.shift(dx, dz); fire.extinguishAll(); fire.clearBurnt();
+      emit('origin:shift', { dx, dz, origin: o });
+    },
+    origin: W.origin,
     queryTrees: trees.queryTrees, damageTree: trees.damageTree, removeTree: trees.removeTree, setTreeHP: trees.setTreeHP, getTree: trees.getTree, igniteTree: trees.igniteTree, resetTrees: trees.reset,
     ignite: (x, z, o) => fire.ignite(x, z, o), fireAt: fire.stateAt, burningCells: fire.burningCells, extinguishAll: fire.extinguishAll, clearBurnt: fire.clearBurnt,
     engineHot, engineOverheat,

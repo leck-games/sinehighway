@@ -3,24 +3,27 @@
 // Rendering: near LOD = low-poly instanced meshes (one draw per species) with vertex-shader wind sway;
 // far LOD = camera-facing impostor cards with per-species comic silhouettes (one draw call).
 import * as THREE from 'three';
-import { sample, biomeWeights, clump, hash2, WATER, snowLine, REG } from './world.js';
+import { sample, biomeWeights, clump, hash2, WATER, origin } from './world.js';
 import { U, COMIC } from './comic.js';
 
 export const SPECIES = ['conifer', 'broadleaf', 'acacia', 'scrub', 'cactus', 'dead'];
 const SP = { CONIFER: 0, BROAD: 1, ACACIA: 2, SCRUB: 3, CACTUS: 4, DEAD: 5 };
 const RADIUS = [0.45, 0.55, 0.35, 0.9, 0.45, 0.4];       // trunk collision radius at scale 1
 // Visual shapes (impostor silhouettes): 0-5 = the 6 species' own look, 6-11 = variants that keep their species' physics/burning.
-// 6 spruce (tall narrow conifer), 7 birch, 8 oak (broad), 9 poplar (columnar), 10 bush cluster (scrub), 11 bare tree (broadleaf)
-export const SHAPES = ['conifer', 'broadleaf', 'acacia', 'scrub', 'cactus', 'dead', 'spruce', 'birch', 'oak', 'poplar', 'bush', 'bare'];
-const SHAPE_SP = [0, 1, 2, 3, 4, 5, 0, 1, 1, 1, 3, 1];
-const SHH = [0, 0, 0, 0, 0, 0, 13.5, 10.2, 8.4, 13.0, 2.3, 8.0]; // card heights for the variants (0 = species geometry height)
-const SHW = [5.4, 6.6, 9.2, 3.2, 3.2, 2.4, 4.6, 5.4, 10.4, 3.6, 5.0, 6.4]; // card widths
-const SHSW = [0.6, 1, 1, 1, 0.1, 0.1, 0.45, 1.2, 0.8, 0.9, 0.5, 0.25]; // wind sway
-const SHC = [0x377a40, 0x558f37, 0x7b8a35, 0x8f9440, 0x3f8a48, 0x1c1714, 0x2b5f40, 0x86b04a, 0x4b7d2c, 0x62983a, 0x6f8e3c, 0x4a3d33];
+// 6 spruce (tall narrow conifer), 7 birch, 8 oak (broad), 9 poplar (columnar), 10 bush cluster (scrub), 11 bare tree (broadleaf),
+// 12 palm (coast, broadleaf physics), 13 organ-pipe cactus (desert, cactus physics)
+export const SHAPES = ['conifer', 'broadleaf', 'acacia', 'scrub', 'cactus', 'dead', 'spruce', 'birch', 'oak', 'poplar', 'bush', 'bare', 'palm', 'organpipe'];
+const SHAPE_SP = [0, 1, 2, 3, 4, 5, 0, 1, 1, 1, 3, 1, 1, 4];
+const SHH = [0, 0, 0, 0, 0, 0, 13.5, 10.2, 8.4, 13.0, 2.3, 8.0, 11.0, 4.2]; // card heights for the variants (0 = species geometry height)
+const SHW = [5.4, 6.6, 9.2, 3.2, 3.2, 2.4, 4.6, 5.4, 10.4, 3.6, 5.0, 6.4, 8.0, 4.4]; // card widths
+const SHSW = [0.6, 1, 1, 1, 0.1, 0.1, 0.45, 1.2, 0.8, 0.9, 0.5, 0.25, 0.9, 0.05]; // wind sway
+const SHC = [0x377a40, 0x558f37, 0x7b8a35, 0x8f9440, 0x3f8a48, 0x1c1714, 0x2b5f40, 0x86b04a, 0x4b7d2c, 0x62983a, 0x6f8e3c, 0x4a3d33, 0x4f9a3c, 0x4c8a4a];
 const TC = 6;                                             // placement cell (m)
-const KEY = (ci, cj) => (ci + 32768) * 65536 + (cj + 32768);
-const unkey = id => [Math.floor(id / 65536) - 32768, (id % 65536) - 32768];
-const BWl = new Float32Array(6), SOt = {};
+// GLOBAL cell keys (floating origin: local cell = global - OI): +-2^24 cells = +-100,000 km
+const KB = 33554432, KO = 16777216;
+const KEY = (gi, gj) => (gi + KO) * KB + (gj + KO);
+const unkey = id => [Math.floor(id / KB) - KO, (id % KB) - KO];
+const BWl = new Float32Array(5), SOt = {};
 
 // ---------- geometry ----------
 function partsGeo(parts) {
@@ -128,6 +131,16 @@ const IMP_FS = COMIC + /* glsl */`
       vec2 q = (p - vec2(.5, .57)) / vec2(.36, .43); fo = step(dot(q, q), 1. - .1 * sin(q.y * 14.)); cn = vec2(.5, .57); }
     else if (sp < 10.5) { // bush cluster: three overlapping blobs
       fo = max(max(circ(p * vec2(1., .5), vec2(.27, .15), .2), circ(p * vec2(1., .5), vec2(.7, .16), .24)), circ(p * vec2(1., .5), vec2(.48, .28), .21)); cn = vec2(.5, .4); }
+    else if (sp < 12.5 && sp > 11.5) { tr = step(abs(p.x - .5 - .14 * p.y * p.y), .032 * (1.2 - p.y * .5)) * step(p.y, .8); // palm: curved trunk + drooping fronds
+      vec2 c = vec2(.5 + .14 * .64, .8);
+      for (int k = 0; k < 7; k++) { float a = -2.9 + float(k) * .97; vec2 d = vec2(cos(a), sin(a) * .55 + .45);
+        vec2 m = c + d * .24 + vec2(0., .05), e = c + d * .46 - vec2(0., .2 * abs(d.x));
+        fo = max(fo, max(seg(p, c, m, .04 - .01 * abs(d.x)), seg(p, m, e, .028))); }
+      fo = max(fo, circ(p, c, .06)); cn = c; rr = .45; }
+    else if (sp > 12.5) { // organ-pipe cactus: a clump of ribbed columns with round tops
+      for (int k = 0; k < 5; k++) { float xk = .18 + .16 * float(k), hk = .5 + .45 * (1. - abs(float(k) - 2.) / 2.) - .08 * mod(float(k), 2.);
+        fo = max(fo, max(step(abs(p.x - xk), .055) * step(p.y, hk), circ(p, vec2(xk, hk), .055))); }
+      fo = max(fo, step(p.y, .12) * step(abs(p.x - .5), .34)); cn = vec2(.5, .45); }
     else { tr = step(abs(p.x - .5), .055 * (1. - p.y * .6)) * step(p.y, .9); // bare tree: forked branches
       tr = max(tr, max(max(seg(p, vec2(.5, .42), vec2(.2, .78), .022), seg(p, vec2(.5, .55), vec2(.8, .88), .022)), max(seg(p, vec2(.5, .32), vec2(.82, .56), .02), seg(p, vec2(.35, .6), vec2(.3, .95), .016))));
       tr = max(tr, max(seg(p, vec2(.68, .73), vec2(.92, .76), .014), seg(p, vec2(.28, .68), vec2(.1, .74), .014))); }
@@ -136,7 +149,9 @@ const IMP_FS = COMIC + /* glsl */`
     vec2 d = (p - cn) / rr; vec3 N = normalize(vR * d.x * 0.8 + vec3(0., 1., 0.) * (0.35 + d.y * 0.5) + normalize(cameraPosition - vW) * 0.6);
     vec3 al = isF > 0.5 ? vC : vec3(.42,.3,.2);
     if (sp > 6.5 && sp < 7.5 && isF < 0.5) al = mix(vec3(.9,.88,.82), vec3(.08,.07,.06), step(.78, fract(p.y * 21. + .3 * sin(p.x * 50.)))); // birch bark
-    if (sp > 10.5) al = vec3(.36,.29,.23);
+    if (sp > 10.5 && sp < 11.5) al = vec3(.36,.29,.23);
+    if (sp > 11.5 && sp < 12.5 && isF < 0.5) al = mix(vec3(.58,.45,.32), vec3(.3,.22,.15), step(.75, fract(p.y * 26.))); // ringed palm trunk
+    if (sp > 12.5) al = al * (0.85 + 0.25 * step(.5, fract(p.x * 36.))); // cactus ribs
     float dm = 1. - vHP; // damage: ink cracks + pale splinters on the trunk (same look as the old near mesh)
     if (dm > 0.01 && isF < 0.5) { float zz = abs(fract(p.y * 14. + 3. * p.x) - 0.5); float cr = abs(sin(p.x * 60. + p.y * 9. + 4. * zz));
       float on = step(p.y, 0.12 + 0.45 * dm); al = mix(al, vec3(.86,.72,.48), step(cr, 0.3 + 0.15 * dm) * on * 0.8); al = mix(al, vec3(.04,.03,.03), step(cr, 0.12 + 0.1 * dm) * on); }
@@ -148,12 +163,12 @@ const IMP_FS = COMIC + /* glsl */`
     gl_FragColor = vec4(col, ncode(N) * 0.9 + 0.05);
   }`;
 const IMP_VS = /* glsl */`
-  attribute vec4 iPos, iPar; attribute vec3 iCol; attribute float iSp; uniform vec3 uWH[12]; uniform vec3 uFC[12];
+  attribute vec4 iPos, iPar; attribute vec3 iCol; attribute float iSp; uniform vec3 uWH[14]; uniform vec3 uFC[14];
   varying vec2 vUv; varying vec3 vW, vC, vR; varying float vSp, vHP, vBurn;
   uniform vec3 uWind; uniform float uTime;
   void main(){
     float shp = floor(iSp + 0.001), au = iSp - shp; int k = int(shp + 0.5); vec3 wh = uWH[0], fc = uFC[0]; // iSp = shape + autumn (fraction)
-    for (int i = 1; i < 12; i++) if (i == k) { wh = uWH[i]; fc = uFC[i]; }
+    for (int i = 1; i < 14; i++) if (i == k) { wh = uWH[i]; fc = uFC[i]; }
     vec3 toC = cameraPosition - iPos.xyz; vec3 R = normalize(vec3(toC.z, 0., -toC.x));
     // damage lean + natural per-instance lean (iPos.w on cards)
     float sc = iPar.x, lean = (1. - iPar.y) * 0.5 + iPos.w; vec2 ld = vec2(cos(iPar.w), sin(iPar.w));
@@ -170,45 +185,67 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
   const hp = new Map(), removed = new Set(), burn = new Map(), burning = new Set(), leanDir = new Map();
   const SPH = [9.8, 8.6, 5.6, 1.6, 4.6, 6.6];  // geometry heights (set from geos when rendering)
   const BASECOL = [[0.9, 1.0, 0.92], [1, 1, 1], [1, 1, 1], [1, 1, 1], [1, 1, 1], [1, 1, 1]];
-  function evalCell(ci, cj) {
-    const id = KEY(ci, cj); if (cells.has(id)) return cells.get(id);
+  let OI = 0, OJ = 0, OXl = 0, OZl = 0; // origin in cells / metres (floating origin)
+  function syncOrigin() { const o = origin(); OXl = o.x; OZl = o.z; OI = Math.round(o.x / TC); OJ = Math.round(o.z / TC); }
+  syncOrigin();
+  const sst = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  function evalCell(ci, cj) { // ci/cj: LOCAL cell indices; hashing + cache use the global cell
+    const gi = ci + OI, gj = cj + OJ, id = KEY(gi, gj); if (cells.has(id)) return cells.get(id);
     let t = null;
     const x0 = (ci + 0.5) * TC, z0 = (cj + 0.5) * TC; biomeWeights(x0, z0, BWl);
-    const h1 = hash2(ci, cj, 51), cl = clump(x0, z0);
-    const pF = BWl[2] * (0.42 + 0.5 * cl), pA = BWl[5] * 0.06, pAc = BWl[1] * 0.045, pS = BWl[0] * 0.05 + BWl[1] * 0.025, pL = BWl[0] * 0.008, pC = BWl[3] * 0.012;
-    const tot = pF + pA + pAc + pS + pL + pC;
+    const h1 = hash2(gi, gj, 51), cl = clump(x0, z0), W = BWl;
+    // per-biome densities: prairie (rare groves + bushes), desert (cactus + scrub), forest (dense), mountains (spruce), coast (palms + bushes)
+    const pF = W[2] * (0.42 + 0.5 * cl), pM = W[3] * (0.05 + 0.16 * sst(0.45, 0.8, cl)), pPB = W[0] * (0.003 + 0.06 * sst(0.74, 0.9, cl)), pS = W[0] * 0.012 + W[1] * 0.012 + W[4] * 0.02,
+      pC = W[1] * 0.014, pD = W[1] * 0.0015 + W[3] * 0.004, pP = W[4] * 0.03, pCB = W[4] * 0.012;
+    const L = [[pF, -1], [pM, SP.CONIFER], [pPB, SP.BROAD], [pS, SP.SCRUB], [pC, SP.CACTUS], [pD, SP.DEAD], [pP, 'palm'], [pCB, SP.BROAD]];
+    let tot = 0; for (const l of L) tot += l[0];
     if (h1 < tot) {
-      let sp; const r = h1;
-      if (r < pF) sp = hash2(ci, cj, 53) < 0.5 + 0.3 * Math.sin(x0 * 0.004 + z0 * 0.003) ? SP.CONIFER : SP.BROAD;
-      else if (r < pF + pA) sp = SP.CONIFER; else if (r < pF + pA + pAc) sp = SP.ACACIA; else if (r < pF + pA + pAc + pS) sp = SP.SCRUB; else if (r < tot - pC) sp = SP.BROAD; else sp = SP.CACTUS;
-      const x = (ci + 0.12 + 0.76 * hash2(ci, cj, 52)) * TC, z = (cj + 0.12 + 0.76 * hash2(ci, cj, 54)) * TC;
+      let sp = SP.SCRUB, q = h1, palm = false, mtn = false;
+      for (const l of L) { if ((q -= l[0]) < 0) { sp = l[1]; mtn = l === L[1]; break; } }
+      if (sp === -1) sp = hash2(gi, gj, 53) < 0.5 + 0.3 * Math.sin((x0 + OXl) * 0.004 + (z0 + OZl) * 0.003) ? SP.CONIFER : SP.BROAD;
+      if (sp === 'palm') { sp = SP.BROAD; palm = true; }
+      const fx = 0.12 + 0.76 * hash2(gi, gj, 52), fz = 0.12 + 0.76 * hash2(gi, gj, 54), x = (ci + fx) * TC, z = (cj + fz) * TC;
       const o = sample(x, z, SOt);
-      const ok = o.h > WATER + 1.0 && o.road < 0.02 && o.rd > 3 && o.tun < -1e8 && o.riv > 3 && !(o.dom === REG.ALPINE && o.h > snowLine(x, z) - 10) && !(o.dom === REG.CANYON);
+      let ok = o.h > WATER + 1.0 && o.road < 0.02 && o.rd > 3.5 && o.tun < -1e8 && o.riv > 3;
+      if (mtn && o.rel > 70) ok = false;                        // tree line above the valley floor
+      if (palm && o.rd > 160 && o.sea < 0.05) ok = false;         // palms line the coast road and the beach
+      if (sp === SP.CACTUS && o.h < WATER + 2) ok = false;
       if (ok) {
-        const s = sp === SP.SCRUB ? 0.8 + 0.7 * hash2(ci, cj, 55) : sp === SP.ACACIA ? 0.85 + 0.45 * hash2(ci, cj, 55) : 0.75 + 0.6 * hash2(ci, cj, 55);
-        const v = 0.85 + 0.3 * hash2(ci, cj, 56), dry = sp === SP.SCRUB || sp === SP.ACACIA ? 1 : 0;
-        t = { id, x, z, y: o.h - 0.15, sp, s, rot: hash2(ci, cj, 57) * 6.283, tint: [v * (1 + 0.15 * dry * (hash2(ci, cj, 58) - 0.3)), v, v * (0.9 + 0.2 * hash2(ci, cj, 59))], lean: hash2(ci, cj, 60) * 6.283 };
-        variant(t, ci, cj, o);
+        const s = sp === SP.SCRUB ? 0.8 + 0.7 * hash2(gi, gj, 55) : sp === SP.ACACIA ? 0.85 + 0.45 * hash2(gi, gj, 55) : 0.75 + 0.6 * hash2(gi, gj, 55);
+        const v = 0.85 + 0.3 * hash2(gi, gj, 56), dry = sp === SP.SCRUB || sp === SP.ACACIA ? 1 : 0;
+        t = { id, gi, gj, fx, fz, x, z, y: o.h - 0.15, sp, s, rot: hash2(gi, gj, 57) * 6.283, tint: [v * (1 + 0.15 * dry * (hash2(gi, gj, 58) - 0.3)), v, v * (0.9 + 0.2 * hash2(gi, gj, 59))], lean: hash2(gi, gj, 60) * 6.283 };
+        variant(t, gi, gj, o, palm, mtn);
       }
     }
     cells.set(id, t); return t;
   }
-  // visual variant by biome: altitude (vs the snow line) and moisture (forest vs scrub/savanna weight, rivers); hue/lean/scale per instance
-  function variant(t, ci, cj, o) {
-    const r = hash2(ci, cj, 62), alt = Math.max(0, Math.min(1, (o.h - 25) / (snowLine(t.x, t.z) - 25))), moist = Math.max(0, Math.min(1, BWl[2] * 1.2 + (o.riv < 40 ? 0.4 : 0) - BWl[1] * 0.8));
+  // visual variant by biome; hue/lean/scale per instance
+  function variant(t, ci, cj, o, palm, mtn) {
+    const r = hash2(ci, cj, 62), alt = Math.max(0, Math.min(1, BWl[3] + (o.h - 60) / 120)), moist = Math.max(0, Math.min(1, BWl[2] * 1.2 + (o.riv < 40 ? 0.4 : 0) - BWl[1] * 0.8));
     let vs = t.sp, au = 0;
-    if (t.sp === SP.CONIFER) { if (r < 0.2 + 0.6 * alt) vs = 6; }
+    if (palm) { vs = 12; t.s = 0.85 + 0.35 * hash2(ci, cj, 55); }
+    else if (t.sp === SP.CONIFER) { if (mtn || r < 0.2 + 0.6 * alt) vs = 6; }
+    else if (t.sp === SP.CACTUS) { if (r < 0.4) vs = 13; }
     else if (t.sp === SP.BROAD) {
-      const pBare = 0.03 + 0.1 * (1 - moist) * alt, pBirch = 0.12 + 0.35 * alt * moist, pPop = o.riv < 60 ? 0.35 : 0.06 * moist, pOak = 0.3 * (1 - alt) * (0.5 + 0.5 * (1 - moist));
+      const pr = BWl[0] > 0.5, pBare = 0.03 + 0.1 * (1 - moist) * alt, pBirch = pr ? 0.02 : 0.12 + 0.35 * alt * moist, pPop = pr ? 0.3 : o.riv < 60 ? 0.35 : 0.06 * moist, pOak = pr ? 0.6 : 0.3 * (1 - alt) * (0.5 + 0.5 * (1 - moist));
       let q = r; if ((q -= pBare) < 0) vs = 11; else if ((q -= pBirch) < 0) vs = 7; else if ((q -= pPop) < 0) vs = 9; else if ((q -= pOak) < 0) vs = 8;
-      const fall = Math.sin(t.x * 0.0021 + 1.3 * Math.cos(t.z * 0.0017)) * Math.cos(t.z * 0.0013 - 0.7); // regional autumn patches
-      if (vs !== 11 && fall > 0.25) { const a = hash2(ci, cj, 63); if (a < (fall - 0.25) * 2.2) au = 0.35 + 0.6 * hash2(ci, cj, 64); }
+      const gx = t.x + OXl, gz = t.z + OZl, fall = Math.sin(gx * 0.0021 + 1.3 * Math.cos(gz * 0.0017)) * Math.cos(gz * 0.0013 - 0.7); // regional autumn patches
+      if (vs !== 11 && fall > 0.25 && BWl[2] > 0.3) { const a = hash2(ci, cj, 63); if (a < (fall - 0.25) * 2.2) au = 0.35 + 0.6 * hash2(ci, cj, 64); }
     } else if (t.sp === SP.SCRUB) { if (r < 0.45) vs = 10; }
     t.vs = vs; t.au = Math.min(0.95, au);
-    t.nl = (hash2(ci, cj, 65) - 0.5) * (vs === 11 || t.sp === SP.ACACIA ? 0.22 : vs === 6 || vs === 9 ? 0.06 : 0.12); // natural lean (rad)
+    t.nl = (hash2(ci, cj, 65) - 0.5) * (vs === 11 || t.sp === SP.ACACIA ? 0.22 : vs === 6 || vs === 9 || vs === 13 ? 0.06 : vs === 12 ? 0.3 : 0.12); // natural lean (rad)
     t.s *= vs === 8 ? 1.1 : vs === 10 ? 0.9 : 1;
     if (vs === 6) { t.tint[0] *= 0.85; t.tint[2] *= 1.08; } // bluish spruce
     t.tint[1] *= 0.92 + 0.16 * hash2(ci, cj, 66); // extra hue spread
+  }
+  // floating origin: re-express cached trees in the new local frame, drop far cache entries
+  function shift(dx, dz, cx = 0, cz = 0) {
+    syncOrigin(); const keep = 1400 * 1400;
+    for (const [id, t] of cells) {
+      if (t) { t.x -= dx; t.z -= dz; if ((t.x - cx) ** 2 + (t.z - cz) ** 2 > keep) cells.delete(id); }
+      else { const [gi, gj] = unkey(id), x = (gi - OI + 0.5) * TC, z = (gj - OJ + 0.5) * TC; if ((x - cx) ** 2 + (z - cz) ** 2 > keep) cells.delete(id); }
+    }
+    lastBuild.x -= dx; lastBuild.z -= dz; dirty = true;
   }
   const shH = t => SHH[t.vs] || SPH[t.sp]; // visual height (m at scale 1)
   function live(t) { return t && !removed.has(t.id); }
@@ -231,7 +268,7 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
     }
     return out;
   }
-  function find(id) { const [ci, cj] = unkey(id); const t = evalCell(ci, cj); return live(t) && t.id === id ? t : null; }
+  function find(id) { const [gi, gj] = unkey(id); const t = evalCell(gi - OI, gj - OJ); return live(t) && t.id === id ? t : null; }
   let dirty = true;
   function removeTree(id) { if (removed.has(id)) return false; removed.add(id); burning.delete(id); hp.delete(id); dirty = true; emit('tree:removed', { id }); return true; }
   function setTreeHP(id, v) { const t = find(id); if (!t) return 0; v = Math.max(0, Math.min(3, Math.round(v))); if (v <= 0) { removeTree(id); return 0; } hp.set(id, v); dirty = true; return v; }
@@ -287,12 +324,12 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
     const R = farR, i0 = Math.floor((cx - R) / TC), i1 = Math.floor((cx + R) / TC), j0 = Math.floor((cz - R) / TC), j1 = Math.floor((cz + R) / TC), R2 = R * R, N2 = nearR * nearR;
     for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
       const wx = (i + 0.5) * TC - cx, wz = (j + 0.5) * TC - cz, d2 = wx * wx + wz * wz; if (d2 > R2) continue;
-      const id = KEY(i, j); let t;
+      const id = KEY(i + OI, j + OJ); let t;
       if (cells.has(id)) t = cells.get(id); else { if (performance.now() - t0 > budgetMs && d2 > 900) { pending = true; continue; } t = evalCell(i, j); }
       if (!live(t)) continue;
       const d = Math.sqrt(d2); if (d > 25 && (wx * dx + wz * dz) < -0.42 * d) continue; // behind camera
       const b = burn.get(t.id) || 0, sp = b >= 1 ? SP.DEAD : t.sp;
-      if (d2 < N2 * (0.9 + 0.2 * hash2(i, j, 61))) { const L = near[sp]; if (L.n < NMAX[sp]) put(L.a, L.n++, t, sp, b); }
+      if (d2 < N2 * (0.9 + 0.2 * hash2(i + OI, j + OJ, 61))) { const L = near[sp]; if (L.n < NMAX[sp]) put(L.a, L.n++, t, sp, b); }
       else if (ni < IMAX) { put(imp.a, ni, t, sp, b); const ch = b >= 1; imp.a.iSp.array[ni] = ch ? SP.DEAD : t.vs + t.au; imp.a.iPos.array[ni * 4 + 3] = ch ? 0 : t.nl; ni++; }
     }
     nearCount = 0;
@@ -310,7 +347,7 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
   }
   function burningList() { const out = []; for (const id of burning) { const t = find(id); if (t) out.push({ id, x: t.x, y: t.y, z: t.z, h: shH(t) * t.s, b: burn.get(id) || 0, sp: t.sp }); } return out; }
   return {
-    queryTrees, damageTree, removeTree, setTreeHP, getTree, igniteTree, burningList, setup, update,
+    queryTrees, damageTree, removeTree, setTreeHP, getTree, igniteTree, burningList, setup, update, shift,
     stats: () => ({ near: nearCount, impostors: impCount, cached: cells.size, removed: removed.size, burning: burning.size, damaged: hp.size }),
     save: () => ({ removed: [...removed], hp: [...hp], burn: [...burn].filter(([, b]) => b >= 1).map(([id]) => id) }),
     reset() { hp.clear(); removed.clear(); burn.clear(); burning.clear(); leanDir.clear(); dirty = true; },

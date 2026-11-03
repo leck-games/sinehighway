@@ -7,22 +7,20 @@ export const LAYOUT_VERSION = 2; // v2 (redesign): the top bar + UI/ARC corner b
 const KEY = 'srui_layout', SLOT = n => 'srui_slot_' + n;
 // [id, label, kind] kind: 'm' movable, 's' sub-button of the top bar (hide/opacity only); flags: e = essential (never hidden)
 export const ELEMENTS = [
-  ['spdgrp', 'SPEEDO', 'm'], ['race', 'RACE', 'm'], ['mini', 'MINIMAP', 'm'], ['cans', 'FUEL', 'm'], ['wp', 'WAYPOINT', 'm'], ['compass', 'COMPASS', 'm'], ['msg', 'MESSAGES', 'm'],
+  ['spdgrp', 'SPEEDO', 'm'], ['route', 'ROUTE STRIP', 'm'], ['msg', 'MESSAGES', 'm'],
   ['corner', '☰ ⚙ MENU + QUICK', 'm', 'e'],
   ['dbg', 'DEBUG', 'm'], ['gauge', 'GAUGE+TEMP', 'm'], ['joy', 'JOYSTICK', 'm'], ['bBst', 'BOOST', 'm'], ['bDrf', 'DRIFT', 'm'],
-  ['bGas', 'GAS', 'm'], ['bBrk', 'BRAKE', 'm'], ['bUnl', 'UNLOAD', 'm'],
-  ['pAtt', '✈ FLIGHT HUD', 'm'], ['pThr', '✈ THROTTLE', 'm'], ['pRud', '✈ RUDDER', 'm']]; // plane HUD (shown in plane mode; always editable here)
-const META = Object.fromEntries(ELEMENTS.map(([id, label, kind, f]) => [id, { id, label, kind, ess: f === 'e', flex: id === 'corner' || /^(b(Gas|Brk|Bst|Drf)|pRud)$/.test(id) }]));
-const NOTX = new Set(['gauge', 'wp', 'race', 'compass', 'msg']); // their CSS centres them with translateX(-50%): dropped once they are placed explicitly
+  ['bGas', 'GAS', 'm'], ['bBrk', 'BRAKE', 'm'], ['bUnl', 'UNLOAD', 'm']];
+const META = Object.fromEntries(ELEMENTS.map(([id, label, kind, f]) => [id, { id, label, kind, ess: f === 'e', flex: id === 'corner' || /^b(Gas|Brk|Bst|Drf)$/.test(id) }]));
+const NOTX = new Set(['gauge', 'route', 'msg']); // their CSS centres them with translateX(-50%): dropped once they are placed explicitly
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), r1 = v => Math.round(v * 100) / 100;
 const blank = () => ({ v: LAYOUT_VERSION, g: { o: 1, s: 1 }, snap: true, flip: false, el: {} });
 export const PRESETS = {
   default: () => blank(),
   lefty: null, // computed: default layout mirrored (needs the live default positions)
   clean: () => ({ v: LAYOUT_VERSION, g: { o: 0.9, s: 1 }, snap: true, flip: false, el: {
-    dbg: { h: 1 }, cans: { h: 1 }, wp: { o: 0.8 },
-    mini: { s: 0.8, o: 0.85 }, gauge: { s: 0.85, o: 0.85 }, race: { o: 0.8 }, corner: { o: 0.6 },
-    joy: { o: 0.55 }, bGas: { o: 0.55 }, bBrk: { o: 0.55 }, bBst: { o: 0.55 }, bDrf: { o: 0.55 }, pThr: { o: 0.6 }, pRud: { o: 0.55 }, pAtt: { s: 0.9, o: 0.85 } } })
+    dbg: { h: 1 }, route: { o: 0.85 }, gauge: { s: 0.85, o: 0.85 }, corner: { o: 0.6 },
+    joy: { o: 0.55 }, bGas: { o: 0.55 }, bBrk: { o: 0.55 }, bBst: { o: 0.55 }, bDrf: { o: 0.55 } } })
 };
 // v1 → v2: element ids that no longer exist (topbtns + its sub-buttons, tUi, tHand) are dropped, everything else is kept as is
 const V1_GONE = ['topbtns', 'tMenu', 'tReset', 'tQ', 'tTilt', 'tDbg', 'tSnd', 'tUi', 'tHand'];

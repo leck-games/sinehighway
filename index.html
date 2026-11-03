@@ -1,7 +1,7 @@
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23ff6a1a' stroke='black' stroke-width='2'/></svg>">
-<title>Sine Rally V0.2-dev</title>
+<title>Sine Rally Route V0.1</title>
 <style>
 :root{--ink:#111;--paper:#f7e6b5;--y:#ffd23c;--o:#ff6a1a;--g:#38c45a;--r:#e8453c;--b:#3c7ce8;--fs-s:11px;--fs-m:13px;--fs-l:16px;--tap:44px;--rad:8px;--gap:8px;--sl:max(10px,env(safe-area-inset-left));--sr:max(10px,env(safe-area-inset-right));--st:max(6px,env(safe-area-inset-top));--sb:env(safe-area-inset-bottom,0px)}
 html,body{margin:0;height:100%;overflow:hidden;background:#f7e6b5;font-family:"Arial Black","Impact",system-ui,sans-serif;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
@@ -13,9 +13,7 @@ body>canvas:first-child{background:#000} /* WebGL alpha carries the ink-edge cod
 #boost{width:150px;height:14px;border:3px solid #111;background:#fff8;transform:skewX(-20deg);margin-top:4px;box-shadow:3px 3px 0 #111}
 #bar{height:100%;background:repeating-linear-gradient(90deg,#ff8a1a 0 8px,#ffd23c 8px 12px);width:100%}
 #air{font-size:22px;color:#ffd23c;margin-top:6px}
-#race{display:none;font-size:17px;text-align:center;padding-top:4px;position:absolute;left:50%;top:0;transform:translateX(-50%);width:max-content;max-width:52vw}#race small{font-size:13px}body.racing #race{display:block}body.racing #wp{top:calc(var(--st) + 44px)}
 #dbg{position:fixed;left:max(10px,env(safe-area-inset-left));bottom:4px;font:bold 11px monospace;white-space:pre;color:#111;background:#fff8;pointer-events:none}
-#mini{position:fixed;right:max(10px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));border-radius:50%;border:4px solid #111;background:#f7e6b5cc;box-shadow:4px 4px 0 #111}
 .sb{background:var(--y);border:3px solid var(--ink);border-radius:6px;padding:5px 9px;font:900 12px "Arial Black",system-ui;color:var(--ink);box-shadow:3px 3px 0 var(--ink);transform:skewX(-8deg);-webkit-tap-highlight-color:transparent}.sb:active{transform:skewX(-8deg) translate(2px,2px);box-shadow:1px 1px 0 var(--ink)}
 #joy{position:fixed;left:calc(max(12px,env(safe-area-inset-left)) + 88px);bottom:calc(20px + env(safe-area-inset-bottom,0px));width:140px;height:140px;border-radius:50%;background:#fff2;border:4px solid #111c;display:none;box-shadow:4px 4px 0 #1116}
 #knob{position:absolute;left:41px;top:41px;width:50px;height:50px;border-radius:50%;background:#ffd23ce6;border:4px solid #111}
@@ -25,43 +23,30 @@ body>canvas:first-child{background:#000} /* WebGL alpha carries the ink-edge cod
 /* nitro: bottom-left corner (left thumb, beside the joystick, inside the safe area); drift took boost's old slot above GAS */
 #bBst{left:max(12px,env(safe-area-inset-left));bottom:calc(30px + env(safe-area-inset-bottom,0px));width:70px;height:70px;background:#ff8a1ae0}#bDrf{right:calc(max(22px,env(safe-area-inset-right)) + 14px);bottom:calc(116px + env(safe-area-inset-bottom,0px));background:#3c7ce8e0}
 #bUnl{position:fixed;right:calc(max(22px,env(safe-area-inset-right)) + 104px);bottom:calc(112px + env(safe-area-inset-bottom,0px));display:none;z-index:5}
-/* corner (left of the minimap): ☰ menu + ⚙ quick-settings tray (RESET, GFX, ARC/NRM, UI, TILT, FPS, SOUND) */
-#corner{position:fixed;top:calc(var(--st) + 2px);right:calc(var(--sr) + 146px);display:flex;gap:8px;z-index:7}
+/* corner (top right): ☰ menu + ⚙ quick-settings tray (RESET, GFX, ARC/NRM, UI, TILT, FPS, SOUND) */
+#corner{position:fixed;top:calc(var(--st) + 2px);right:var(--sr);display:flex;gap:8px;z-index:7}
 .cb{width:44px;height:40px;padding:0;font-size:19px;line-height:1;display:flex;align-items:center;justify-content:center}#tQuick.sel{background:var(--o);color:#fff}
 #qtray{position:absolute;top:calc(100% + 8px);right:0;display:none;grid-template-columns:repeat(4,80px);gap:8px;padding:8px;background:#f7e6b5f0;border:3px solid var(--ink);border-radius:var(--rad);box-shadow:4px 4px 0 var(--ink)}
 #corner.left #qtray{right:auto;left:0}#corner.up #qtray{top:auto;bottom:calc(100% + 8px)}
 #qtray.on{display:grid}#qtray .sb{height:42px;padding:2px 4px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform:none}#qtray .sb small{display:block;font:bold 9px Arial,sans-serif;opacity:.7}
 #tHand{background:var(--g);color:#fff;-webkit-text-stroke:.6px #111}#tHand.nrm{background:#8a94a6}#qtray .sb.on{background:var(--o);color:#fff}
-body.ui-min #dbg,body.ui-min #labels,body.ui-min #cans,body.ui-min #carinfo,body.ui-min #air,body.ui-min #race{display:none!important}
-body.ui-min #mini{width:84px;height:84px;border-width:3px}body.ui-min #corner{right:calc(var(--sr) + 98px)}
-body.ui-none #hud,body.ui-none #mini,body.ui-none #cans,body.ui-none #wp,body.ui-none #gauge,body.ui-none #dbg,body.ui-none #labels,body.ui-none #msg,body.ui-none #bUnl{display:none!important}
+body.ui-min #dbg,body.ui-min #labels,body.ui-min #carinfo,body.ui-min #air{display:none!important}
+body.ui-min #route{transform:translateX(-50%) scale(.8);transform-origin:50% 0}
+body.ui-none #hud,body.ui-none #route,body.ui-none #gauge,body.ui-none #dbg,body.ui-none #labels,body.ui-none #msg,body.ui-none #bUnl{display:none!important}
 body.ui-none #joy,body.ui-none .btn{opacity:0} /* touch zones keep working invisibly */
 body.ui-none #corner{right:var(--sr);opacity:.35}
-#msg{position:fixed;left:50%;top:calc(var(--st) + 50px);transform:translateX(-50%);width:max-content;max-width:min(60vw,420px);pointer-events:none;z-index:6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+#msg{position:fixed;left:50%;top:calc(var(--st) + 62px);transform:translateX(-50%);width:max-content;max-width:min(60vw,420px);pointer-events:none;z-index:6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
  font:italic 800 var(--fs-l)/1.2 system-ui,sans-serif;color:#fff;-webkit-text-stroke:0;text-shadow:none;background:rgba(17,17,17,.8);border:2px solid var(--ink);box-shadow:2px 2px 0 var(--ink);border-radius:999px;padding:3px 12px;opacity:0}
 #msg:empty{display:none}#msg.show{animation:toast var(--dur,1.5s) ease-out forwards}#msg.t-big{font-size:20px;padding:4px 16px;border-color:var(--y)}
 #msg.fast{color:#7dff9a}#msg.slow{color:#ffb0a8}#msg.t-big.fast{color:#fff;background:rgba(30,110,50,.88)}
 @keyframes toast{0%{opacity:0}10%{opacity:1}78%{opacity:1}100%{opacity:0}}
-body.racing:not(.nocompass) #msg{top:calc(var(--st) + 72px)}body.nocompass #msg{top:calc(var(--st) + 6px)}body.racing.nocompass #msg{top:calc(var(--st) + 30px)}
 body.uied #msg{animation:none;opacity:1}
 .pop{animation:pop .35s ease-out}@keyframes pop{0%{transform:scale(2.2) rotate(-6deg)}100%{transform:scale(1) rotate(-3deg)}}
 #gauge{position:fixed;left:50%;bottom:calc(4px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);pointer-events:none;filter:drop-shadow(3px 3px 0 #1116)}
 @media (max-height:420px){#gauge{width:160px;height:96px}}
+#route{position:fixed;left:50%;top:var(--st);transform:translateX(-50%);width:min(420px,46vw);height:auto;pointer-events:none;z-index:4;filter:drop-shadow(3px 3px 0 #1116)}
 #rot{position:fixed;inset:0;background:#ffd23c;color:#111;display:none;align-items:center;justify-content:center;font-size:22px;z-index:9}
 @media (orientation:portrait) and (pointer:coarse){#rot{display:flex}}
-#mini{cursor:pointer;pointer-events:auto;z-index:6}
-#cans{display:none;position:fixed;right:max(10px,env(safe-area-inset-right));top:calc(max(8px,env(safe-area-inset-top)) + 140px);width:138px;text-align:center;font:900 13px "Arial Black",system-ui;color:#fff;-webkit-text-stroke:1px #111;text-shadow:2px 2px 0 #111;pointer-events:none}body.hascans #cans{display:block}
-#compass{position:fixed;left:50%;top:var(--st);transform:translateX(-50%);width:min(300px,44vw);height:44px;pointer-events:none;z-index:4;-webkit-mask-image:linear-gradient(90deg,transparent,#000 11%,#000 89%,transparent);mask-image:linear-gradient(90deg,transparent,#000 11%,#000 89%,transparent)}
-body.nocompass #compass,body.ui-none #compass{display:none!important}body:not(.nocompass):not(.ui-none):not(.uied) #wp{display:none!important}/* waypoint lives in the compass (pinned, edge-clamped) */body.nocompass.haswp #msg{top:calc(var(--st) + 72px)}body.nocompass.racing.haswp #msg{top:calc(var(--st) + 116px)}body:not(.nocompass):not(.ui-none) #race{top:44px}body:not(.nocompass):not(.ui-none) #wp{top:calc(var(--st) + 48px)}body.racing:not(.nocompass):not(.ui-none) #wp{top:calc(var(--st) + 94px)}
-#wp{position:fixed;left:50%;top:max(8px,env(safe-area-inset-top));transform:translateX(-50%);display:none;text-align:center;pointer-events:none;z-index:4}
-#wpA{width:44px;height:44px;margin:0 auto;font:900 34px/44px "Arial Black",system-ui;color:#e8453c;-webkit-text-stroke:2px #111;text-shadow:3px 3px 0 #111}
-#wpD{font:900 13px "Arial Black",system-ui;color:#fff;-webkit-text-stroke:1px #111;text-shadow:2px 2px 0 #111}
-#map{position:fixed;inset:0;display:none;z-index:20;background:#f7e6b5}
-#mapc{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
-#mapui{position:absolute;left:max(10px,env(safe-area-inset-left));top:max(8px,env(safe-area-inset-top));display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-#mInfo{font:900 13px "Arial Black",system-ui;color:#fff;-webkit-text-stroke:1px #111;text-shadow:2px 2px 0 #111;margin-left:6px}
-#mList{position:absolute;right:max(10px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));bottom:10px;width:190px;overflow:auto;display:flex;flex-direction:column;gap:6px;font:900 12px "Arial Black",system-ui;color:#111;text-align:right}
-#mList i{background:#fffd;border:2px solid #111;padding:6px;font-style:normal}
 /* ☰ menu: full safe-area sheet, tab rail left, scrollable pane right */
 #menu{position:fixed;left:var(--sl);right:var(--sr);top:var(--st);bottom:max(6px,var(--sb));max-width:900px;margin:0 auto;display:none;z-index:21;background:#f7e6b5f7;border:4px solid var(--ink);box-shadow:6px 6px 0 var(--ink);border-radius:var(--rad);overflow:hidden;grid-template-columns:132px 1fr}
 #menu.on{display:grid}
@@ -136,19 +121,10 @@ body.nocompass #compass,body.ui-none #compass{display:none!important}body:not(.n
 .pw-cv{align-self:flex-start}@media (max-width:1000px){.pw-side{width:260px}.pw-read{columns:2;column-gap:8px;font-size:10px;padding:4px 6px}.pw-read .pw-big{font-size:17px}}
 #sndEd .se-row input[type=text]{width:110px;font:900 11px "Arial Black",system-ui;border:2px solid #111;padding:4px}#sndEd .se-named{display:inline-flex;gap:2px}
 </style><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Sine Rally V0.2-dev">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Sine Rally Route">
 <meta name="theme-color" content="#ff6a1a"><meta name="format-detection" content="telephone=no">
 <link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<style>/* iOS home-screen */canvas{touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}#versionsLink{margin-left:6px;background:#ffd23c!important}#allBuilds,#versionsLink{display:inline-block;text-decoration:none;font:900 12px "Arial Black",system-ui,sans-serif;color:#111;background:#fff;border:3px solid #111;border-radius:6px;padding:5px 9px;box-shadow:3px 3px 0 #111;-webkit-tap-highlight-color:transparent}/* SineRally UI: plane HUD (artificial horizon, throttle slider, rudder) — shown in plane mode, editable in the UI editor */
-#pAtt{position:fixed;left:calc(50% - 30px);top:calc(max(6px,env(safe-area-inset-top)) + 46px);width:210px;height:104px;display:none;pointer-events:none;filter:drop-shadow(3px 3px 0 #1116)}
-#pThr{position:fixed;right:calc(max(22px,env(safe-area-inset-right)) + 186px);bottom:calc(16px + env(safe-area-inset-bottom,0px));width:44px;height:150px;display:none;border:4px solid #111;border-radius:10px;background:#fff3;box-shadow:4px 4px 0 #1118;touch-action:none;overflow:hidden;z-index:4}
-#pThrF{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(#ff8a1a,#ffd23c)}#pThrV{position:absolute;left:0;right:0;top:4px;text-align:center;font:900 12px "Arial Black",system-ui;color:#fff;-webkit-text-stroke:.8px #111}
-#pThr::after{content:"THR";position:absolute;left:0;right:0;bottom:4px;text-align:center;font:900 10px "Arial Black",system-ui;color:#111}
-#pRud{position:fixed;left:max(12px,env(safe-area-inset-left));bottom:calc(24px + env(safe-area-inset-bottom,0px));display:none;flex-direction:column;gap:10px}
-#pRud .sb{width:52px;height:44px;padding:0;font-size:15px;opacity:.9}#pRud .sb.on{background:#ff6a1a;color:#fff}
-body.plane #pAtt,body.plane #pThr{display:block}body.plane.touch #pRud{display:flex}body.plane #bUnl{display:none!important}body.plane.noab #bBst,body.plane.noab #boost{display:none!important}
-body.plane #carinfo{display:block}body.plane #race{display:none!important}body.ui-none #pAtt{display:none!important}body.ui-none #pThr,body.ui-none #pRud{opacity:0}
-@media (max-height:420px){#pThr{height:130px}}
+<style>/* iOS home-screen */canvas{touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}#versionsLink{margin-left:6px;background:#ffd23c!important}#allBuilds,#versionsLink{display:inline-block;text-decoration:none;font:900 12px "Arial Black",system-ui,sans-serif;color:#111;background:#fff;border:3px solid #111;border-radius:6px;padding:5px 9px;box-shadow:3px 3px 0 #111;-webkit-tap-highlight-color:transparent}
 </style>
 <style>/* SineRally UI: custom HUD layout (js/ui-editor.js). Per-element opacity x global opacity; hidden flag; edit mode overlay */
 .uie{opacity:calc(var(--uo,1) * var(--ugo,1))}.uie.uie-sub{opacity:var(--uo,1)}.uie-h{display:none!important}
@@ -172,12 +148,10 @@ body.uied .uie{display:block!important}body.uied .uie-f{display:flex!important}b
 </style>
 </head><body>
 <div id="hud"><div id="spdgrp"><div id="spdbox" class="ink"><span id="spd">0</span><span id="unit">KM/H</span></div><div id="boost"><div id="bar"></div></div><div id="air" class="ink"></div><div id="carinfo" class="ink"></div></div>
-<div id="race" class="ink"></div><div style="width:140px"></div></div>
-<canvas id="mini" width="130" height="130" title="World map (M)"></canvas><div id="cans">⛽ 0</div>
-<canvas id="compass" width="300" height="44"></canvas><div id="wp"><div id="wpA">▲</div><div id="wpD"></div></div>
-<div id="map"><canvas id="mapc"></canvas><div id="mapui"><button class="sb" id="mClose">✕ BACK</button><button class="sb" id="mZin">＋</button><button class="sb" id="mZout">－</button><button class="sb" id="mClr">CLEAR WAYPOINT</button><span id="mInfo"></span></div><div id="mList"></div></div>
-<div id="menu" role="dialog" aria-label="Menu"><nav id="mTabs"><b class="mt-t">SINE RALLY<br><span id="verTag">V0.2-dev</span></b>
-<button class="mtab" data-tab="drive"><i>🏁</i><em id="mtDrive" style="font-style:normal">DRIVE</em></button><button class="mtab" data-tab="vehicle"><i>🚗</i>VEHICLE</button><button class="mtab" data-tab="sound"><i>🔊</i>SOUND</button><button class="mtab" data-tab="gfx"><i>✨</i>GRAPHICS</button><button class="mtab" data-tab="hud"><i>🎮</i>CONTROLS</button><button class="mtab" data-tab="world"><i>🌍</i>WORLD</button>
+<div style="width:140px"></div></div>
+<canvas id="route" width="420" height="58"></canvas>
+<div id="menu" role="dialog" aria-label="Menu"><nav id="mTabs"><b class="mt-t">SINE RALLY<br>ROUTE <span id="verTag">V0.1</span></b>
+<button class="mtab" data-tab="drive"><i>🛣</i><em id="mtDrive" style="font-style:normal">DRIVE</em></button><button class="mtab" data-tab="vehicle"><i>🚗</i>VEHICLE</button><button class="mtab" data-tab="sound"><i>🔊</i>SOUND</button><button class="mtab" data-tab="gfx"><i>✨</i>GRAPHICS</button><button class="mtab" data-tab="hud"><i>🎮</i>CONTROLS</button><button class="mtab" data-tab="world"><i>🌍</i>WORLD</button>
 <button class="sb" id="mnClose">✕ CLOSE</button></nav>
 <section id="mBody"><div id="mHead"><h3 id="mTitle">DRIVE</h3><a id="allBuilds" href="https://leck-games.github.io/">‹ ALL BUILDS</a><a id="versionsLink" href="https://leck-games.github.io/versions/">VERSIONS</a></div><div id="mPanes">
 <div class="mpane" data-pane="drive"><div id="mRows"></div></div>
@@ -188,12 +162,11 @@ body.uied .uie{display:block!important}body.uied .uie-f{display:flex!important}b
 <div class="mpane" data-pane="world"><div id="mWorld"></div></div>
 </div></section></div>
 <div id="corner"><button class="sb cb" id="tMenu" title="Menu (Esc)" aria-label="Menu">☰</button><button class="sb cb" id="tQuick" title="Quick settings (Q)" aria-label="Quick settings">⚙</button>
-<div id="qtray"><button class="sb" id="tReset">⟲ RESET</button><button class="sb" id="tQ">GFX</button><button class="sb" id="tHand" title="Handling (H)">ARC</button><button class="sb" id="tUi" title="HUD mode (U)">◉ FULL</button><button class="sb" id="tTilt">TILT</button><button class="sb" id="tDbg">FPS</button><button class="sb" id="tSnd" data-snd-own title="Engine sound mute">🔊 ON</button><button class="sb" id="tMap">🗺 MAP</button></div></div>
+<div id="qtray"><button class="sb" id="tReset">⟲ RESET</button><button class="sb" id="tQ">GFX</button><button class="sb" id="tHand" title="Handling (H)">ARC</button><button class="sb" id="tUi" title="HUD mode (U)">◉ FULL</button><button class="sb" id="tTilt">TILT</button><button class="sb" id="tDbg">FPS</button><button class="sb" id="tSnd" data-snd-own title="Engine sound mute">🔊 ON</button><button class="sb" id="tAuto">AUTO</button></div></div>
 <div id="dbg"></div>
 <div id="joy"><div id="knob"></div></div>
 <div class="btn" id="bGas">GAS</div><div class="btn" id="bBrk">BRAKE</div><div class="btn" id="bBst">BOOST</div><div class="btn" id="bDrf">DRIFT</div>
 <canvas id="gauge" width="200" height="120"></canvas>
-<canvas id="pAtt" width="210" height="104"></canvas><div id="pThr"><div id="pThrF"></div><div id="pThrV">0</div></div><div id="pRud"><button class="sb" id="pRL">◀R</button><button class="sb" id="pRR">R▶</button></div>
 <button class="sb" id="bUnl">UNLOAD</button>
 <div id="labels"></div><div id="msg"></div><div id="rot">ROTATE TO LANDSCAPE ↻</div>
 <script type="importmap">{"imports":{"three":"./js/three.module.js"}}</script>

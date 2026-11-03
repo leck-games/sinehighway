@@ -20,8 +20,9 @@ export function createWeather({ heightAt, emit = () => {} } = {}) {
   const climA = new Float32Array(CN * CN), climB = new Float32Array(CN * CN), climBytes = new Uint8Array(CN * CN * 4);
   const climTex = new THREE.DataTexture(climBytes, CN, CN, THREE.RGBAFormat); climTex.minFilter = climTex.magFilter = THREE.LinearFilter; climTex.wrapS = climTex.wrapT = THREE.ClampToEdgeWrapping;
   U.uClimT.value = climTex;
-  let climO = null, climJob = null; const BW = new Float32Array(6);
-  const climVal = (x, z) => { biomeWeights(x, z, BW); return Math.min(1, BW[2] + 0.55 * BW[5]); };
+  let climO = null, climJob = null; const BW = new Float32Array(5);
+  // cloudiness climate: forest/mountains/coast are wetter, desert stays mostly clear
+  const climVal = (x, z) => { biomeWeights(x, z, BW); return Math.min(1, BW[2] + 0.5 * BW[3] + 0.3 * BW[4] + 0.15 * BW[0]); };
   function climStart(cx, cz, sync) {
     const ox = Math.round(cx / 512) * 512 - CSZ / 2, oz = Math.round(cz / 512) * 512 - CSZ / 2;
     climJob = { ox, oz, row: 0 }; if (sync) while (climJob) climStep(CN);
@@ -203,6 +204,15 @@ export function createWeather({ heightAt, emit = () => {} } = {}) {
   }
   return {
     setup, update, rainAt, coverageAt, wetAt, climAt,
+    // floating origin: everything world-anchored moves by -d (cloud space via st.off; climate/wet windows keep their texels)
+    shift(dx, dz) {
+      st.off[0] -= dx; st.off[1] -= dz; U.uCloudOff.value.set(st.off[0], st.off[1], st.bias);
+      if (climO) { climO.ox -= dx; climO.oz -= dz; U.uClimO.value.set(climO.ox, climO.oz, CSZ, 1); }
+      if (climJob) { climJob.ox -= dx; climJob.oz -= dz; }
+      if (wo) { wo.ox -= dx; wo.oz -= dz; U.uWetO.value.set(wo.ox, wo.oz, WN * WS, 1); }
+      lastC.x -= dx; lastC.z -= dz; cloudT = 0;
+      if (bolt) bolt.visible = false;
+    },
     wind: () => ({ x: Math.cos(st.windDir), z: Math.sin(st.windDir), speed: st.windSpeed * st.gust, dir: st.windDir }),
     setWind(dir, speed) { if (dir !== undefined && dir !== null) st.windDir = dir; if (speed !== undefined) st.windSpeed = Math.max(0, speed); },
     setRain(mode) { if (!(mode in BIAS)) throw new Error('rain mode: off|auto|on|storm'); st.mode = mode; },
