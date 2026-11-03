@@ -229,7 +229,7 @@ export function sample(x, z, o = OUT) {
     rd = ad - hw; rdd = rd; rb = hb;
     road = ad < hw + 0.5 ? 1 : sst(hw + 2.5, hw + 0.5, ad);
     if (inT && ad < F + 12) {
-      if (ad < F) { tun = hb; o.ts = s; o.thw = F; o.tdep = mn(s - inT.s0, inT.s1 - s); o.tnx = -tz; o.tnz = tx; o.tH = TUN_H; }
+      if (ad < F) { tun = hb; o.ts = d; o.thw = F; o.tdep = mn(s - inT.s0, inT.s1 - s); o.tnx = -tz; o.tnz = tx; o.tH = TUN_H; }
       const cover = yy + TUN_H + 1.8, w = ad < F + 1.5 ? 1 : sst(F + 12, F + 1.5, ad); if (h < cover) h = h + (cover - h) * w;
     } else if (onB && hn < hb) {
       if (ad < hw + 1.2) deck = hb;

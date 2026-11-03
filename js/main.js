@@ -130,8 +130,9 @@ function cellObj(ci, cj) { // ci,cj: global cell indices; cached objects hold LO
   o = null; const O = W.origin();
   const h = hash2(ci, cj, 9), x = (ci + hash2(ci, cj, 7)) * SC - O.x, z = (cj + hash2(ci, cj, 8)) * SC - O.z;
   sample(x, z, SO);
-  if (SO.h > WATER + 1.2 && SO.road < 0.05 && SO.rd > 3.5 && !(SO.tun > -1e8)) {
-    const s = 0.7 + hash2(ci, cj, 6) * 0.8, v = hash2(ci, cj, 5), d = SO.dom, B = W.BIOME;
+  const s = 0.7 + hash2(ci, cj, 6) * 0.8, big0 = SO.dom === W.BIOME.DESERT ? 1.8 : 1;
+  if (SO.h > WATER + 1.2 && SO.road < 0.05 && SO.rd > 2.2 * s * big0 + 1.5 && !(SO.tun > -1e8)) { // the whole collider stays off the asphalt
+    const v = hash2(ci, cj, 5), d = SO.dom, B = W.BIOME;
     const thr = d === B.MOUNTAINS ? 0.9 : d === B.FOREST ? 0.95 : d === B.PRAIRIE ? 0.985 : d === B.DESERT ? 0.9 : 0.95;
     if (h > thr) o = { m: v < 0.6 ? 0 : 1, x, z, y: SO.h, s, h, v, red: d === B.DESERT, key };
   }
@@ -565,6 +566,7 @@ const REBASE_R = 1080, REBASE_STEP = 720; let rebases = 0, odoX = veh.p.x, odoZ 
 function rebase() {
   const px = veh.p.x, pz = veh.p.z; if (Math.abs(px) < REBASE_R && Math.abs(pz) < REBASE_R) return false;
   const dx = Math.round(px / REBASE_STEP) * REBASE_STEP, dz = Math.round(pz / REBASE_STEP) * REBASE_STEP; if (!dx && !dz) return false;
+  const pre = W.project(px, pz), vx = veh.v.x, vz = veh.v.z, cgx = camPos.x - px, cgz = camPos.z - pz;
   veh.p.x -= dx; veh.p.z -= dz;
   for (const wh of veh.wheels) { if (wh.pos) { wh.pos.x -= dx; wh.pos.z -= dz; } if (wh.cp) { wh.cp.x -= dx; wh.cp.z -= dz; } }
   camPos.x -= dx; camPos.z -= dz; look.x -= dx; look.z -= dz; camera.position.x -= dx; camera.position.z -= dz; camera.updateMatrixWorld();
@@ -574,6 +576,8 @@ function rebase() {
   odoX -= dx; odoZ -= dz;
   T.shiftOrigin(dx, dz, veh.p.x, veh.p.z); // world.js origin + terrain rings/roads/trees/grass/fire + uOrg
   cellCache.clear(); scx = 1e9; colliders.length = 0; props.shift(); updateScenery(veh.p.x, veh.p.z);
+  { const post = W.project(veh.p.x, veh.p.z), e = Math.max(Math.abs(post.s - pre.s), Math.abs(post.d - pre.d), Math.abs(veh.v.x - vx) + Math.abs(veh.v.z - vz), Math.abs(camPos.x - veh.p.x - cgx) + Math.abs(camPos.z - veh.p.z - cgz));
+    stats.rebaseErr = Math.max(stats.rebaseErr || 0, e); }
   vis.group.position.set(veh.p.x, veh.p.y, veh.p.z); rebases++; fire('origin:shift', { dx, dz, origin: W.origin() });
   return true;
 }
@@ -647,8 +651,27 @@ function frame(now) {
   if (!QS.has('nopost')) { renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); renderer.render(postScene, postCam); }
   else { renderer.setRenderTarget(null); renderer.render(scene, camera); }
   stats.frameMs = performance.now() - t0;
+  { const g = Math.hypot(camera.position.x - veh.p.x, camera.position.z - veh.p.z); if (tFrame > 2 && stats.camG != null) stats.camJump = Math.max(stats.camJump || 0, Math.abs(g - stats.camG)); stats.camG = g; }
   frames++; fpsT += dt; if (fpsT > 0.5) { fps = stats.fps = frames / fpsT; window.__fps = fps; if (tFrame > 3) stats.minFps = Math.min(stats.minFps, fps); frames = 0; fpsT = 0;
     if (dbg) { sample(veh.p.x, veh.p.z, SO); const ts = T.stats ? T.stats() : {}, O = W.origin(); $('dbg').textContent = `${fps.toFixed(0)} fps  GFX ${qName}  cpu ${stats.frameMs.toFixed(1)}ms (phys ${stats.physMs.toFixed(1)})\ncalls ${renderer.info.render.calls} tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k\nroute ${(sCur / 1000).toFixed(2)} km · local ${veh.p.x.toFixed(0)},${veh.p.z.toFixed(0)} y${veh.p.y.toFixed(0)} · origin ${O.x},${O.z} (${rebases}×) ${W.BIOME_NAMES[SO.dom]}\n${vDef.id} gear ${veh.gear} rpm ${veh.rpm.toFixed(0)} ${veh.heat.temp.toFixed(0)}°C wheels ${veh.grounded}${autoOn ? ' AUTO' : ''}${ts.fire && ts.fire.burning ? ' fire ' + ts.fire.burning : ''}`; } }
+}
+// tests: run physics + autopilot + floating origin + route streaming WITHOUT rendering (50+ km drives in seconds of wall time)
+function simFast(sec) {
+  const n = Math.round(sec / STEP), r = { maxD: 0, maxLocal: 0, minSpeed: 1e9, offroad: 0, tunnels: 0, bridges: 0, rebases0: rebases, s0: sCur, odo0: odo, maxY: -1e9, minY: 1e9, airs: 0, crashes: 0, stuck: 0 };
+  const offCrash = bus.on('crash', () => r.crashes++); let lastS = sCur, stuckT = 0;
+  for (let i = 0; i < n; i++) {
+    simT += STEP; if (autoOn) autopilot(STEP); T.setRef(veh.p.y); const g0 = inp.gas; inp.gas = PWR.throttle(veh, STEP, g0); rig.step(inp, STEP); inp.gas = g0; pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); tunnelWalls(veh);
+    if (i % 12) continue; // 10 Hz bookkeeping, like a slow frame
+    rebase(); { const d = Math.hypot(veh.p.x - odoX, veh.p.z - odoZ); if (d < 50) odo += d; odoX = veh.p.x; odoZ = veh.p.z; }
+    const pr = W.project(veh.p.x, veh.p.z); sCur = Math.max(0, pr.s); if (sCur > sMax) sMax = sCur; W.setFocus(sCur); props.update(sCur); updateWorld(false);
+    const ad = Math.abs(pr.d); r.maxD = Math.max(r.maxD, ad); if (ad > W.ROAD_HW + 0.5) r.offroad++; r.maxLocal = Math.max(r.maxLocal, Math.abs(veh.p.x), Math.abs(veh.p.z));
+    const sp = fwdSpeed(); if (simT > 5) r.minSpeed = Math.min(r.minSpeed, sp); r.maxY = Math.max(r.maxY, veh.p.y); r.minY = Math.min(r.minY, veh.p.y);
+    if (T.tunnelAt(veh.p.x, veh.p.z)) r.tunnels++; if (W.routePoint(sCur).bridge) r.bridges++;
+    if ((stuckT += 0.1) > 10) { if (sCur - lastS < 20) { r.stuck++; const p = lanePoint(sCur + 30); spawn(p.x, p.z, p.yaw); } lastS = sCur; stuckT = 0; }
+    if (i % 600 === 0) { camPos.set(veh.p.x, veh.p.y + 5, veh.p.z - 10); camera.position.copy(camPos); look.set(veh.p.x, veh.p.y, veh.p.z); camera.lookAt(look); camera.updateMatrixWorld(); focus.x = veh.p.x; focus.y = veh.p.y; focus.z = veh.p.z; T.update(0.5, { camera, focus, viewHeight: rt.height }); }
+  }
+  offCrash(); r.km = (odo - r.odo0) / 1000; r.ds = sCur - r.s0; r.rebases = rebases - r.rebases0; r.damage = veh.damage; r.origin = W.origin(); r.rebaseErr = stats.rebaseErr || 0; r.chunks = W.chunkStats();
+  return r;
 }
 requestAnimationFrame(frame);
 // release identity from js/version.js (title, menu tag, versions link)
@@ -657,7 +680,7 @@ window.__st = { version: GAME_NAME, PWR, get gripTest() { return gripTest; }, se
   get q() { return qName; }, setQ(q) { qName = q; applyQuality(); }, get x() { return veh.p.x; }, get z() { return veh.p.z; }, get y() { return veh.p.y; },
   place(x, z, yaw = 0) { spawn(x, z, yaw); }, teleport(x, z, yaw = 0) { spawn(x, z, yaw); updateWorld(true); }, toBiome(name, yaw = 0) { const p = T.findBiome(name, veh.p.x, veh.p.z); if (p) this.teleport(p.x, p.z, yaw); return p; },
   toS(s, d = 3) { const p = lanePoint(Math.max(0, s), d); spawn(p.x, p.z, p.yaw); camPos.set(veh.p.x - Math.sin(p.yaw) * 10, veh.p.y + 4, veh.p.z - Math.cos(p.yaw) * 10); odoX = veh.p.x; odoZ = veh.p.z; rebase(); odoX = veh.p.x; odoZ = veh.p.z; sCur = Math.max(0, W.project(veh.p.x, veh.p.z).s); W.setFocus(sCur); props.update(sCur); updateWorld(true); return p; },
-  lanePoint, rebase, get rebases() { return rebases; }, get origin() { return W.origin(); }, props,
+  lanePoint, rebase, simFast, get rebases() { return rebases; }, get origin() { return W.origin(); }, props,
   get route() { const g = W.segmentAt(sCur), n = W.nextBiome(sCur), pr = W.project(veh.p.x, veh.p.z); return { s: sCur, sMax, km: odo / 1000, d: pr.d, biome: g.name, title: g.title, next: n.name, nextS: n.s, weights: Array.from(W.biomeAtS(sCur)) }; },
   get auto() { return autoOn; }, set auto(v) { autoOn = !!v; }, setAuto, get ap() { return AP; }, set odo(v) { odo = v; },
   setVehicle, useVehicle, setAttachments, get vName() { return vDef.id; }, openMenu, get wx() { return wx; }, setWx(m, snap = true) { wxMode = m; applyWx(); if (snap) T.snapWeather(); }, set tod(v) { tod = v; timeMode = 'Fixed'; applyTime(); },
