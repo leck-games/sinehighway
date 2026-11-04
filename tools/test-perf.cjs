@@ -6,7 +6,7 @@ const BUD = { Low: { calls: 80, tris: 250e3 }, Med: { calls: 90, tris: 350e3 }, 
 (async () => {
   { const h = await launch(); await open(h, ''); await new Promise(r => setTimeout(r, 6000));
     const v = await h.page.evaluate(() => ({ name: __st.version, title: document.title, fps: window.__fps, q: __st.q }));
-    ok(v.name === 'SineHighway V0.2' && v.title === v.name, `version label "${v.name}" (title "${v.title}")`);
+    ok(v.name === 'SineHighway V0.3-dev' && v.title === v.name, `version label "${v.name}" (title "${v.title}")`);
     ok(!h.errors.length, `default URL (q=${v.q}): no console errors ` + h.errors.slice(0, 3).join(' | '));
     await h.close(); }
   for (const q of ['low', 'med', 'high']) {

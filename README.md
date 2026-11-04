@@ -1,4 +1,4 @@
-# SineHighway V0.2
+# SineHighway V0.3-dev
 
 (Formerly **Sine Rally Route**; the repo moved from `leck-games/sinerally-route` to `leck-games/sinehighway`, and old GitHub links redirect.)
 
@@ -8,7 +8,7 @@ An endless, curvy, Route-66-style two-lane road through changing biomes. It is a
 
 - **Play:** https://leck-games.github.io/sinehighway/ (Three.js r160, plain ES modules, no build step).
 - **All builds:** https://leck-games.github.io/versions/
-- **Version:** set in `js/version.js`, which drives the page title and the menu tag "SineHighway V0.2".
+- **Version:** set in `js/version.js`, which drives the page title and the menu tag "SineHighway V0.3-dev".
 
 ## What it is
 - **One endless road:** procedural and deterministic by seed (`?seed=`, default 66). There is no world edge, rim, city grid or side road. The world is the route.
@@ -56,6 +56,16 @@ An endless, curvy, Route-66-style two-lane road through changing biomes. It is a
 WASD/arrows to drive · Space drift · Shift boost · **X / Z** gear up / down (manual gearbox) · **R** reset to road · **O** autopilot · H handling · V next vehicle · G graphics · F FPS · I HUD mode · U edit HUD.
 On touch screens, use the on-screen pedals and stick (iPhone landscape). With the manual gearbox, swipe up or down on the gas pedal to shift. ☰ opens the menu.
 
+## Fullscreen (⛶, top-right, next to ☰ and ⚙)
+- **Android, desktop and iPad:** tap ⛶ to go into real fullscreen (Fullscreen API). The button hides, and the screen locks to landscape where the browser allows it.
+  - Rotating back to portrait leaves fullscreen.
+  - The button comes back in landscape whenever you're not in fullscreen, including after Esc or a system swipe.
+- **Home-screen app (iPhone/Android):** the app is already fullscreen and landscape (`manifest.webmanifest` `display: fullscreen`, `orientation: landscape`, plus `apple-mobile-web-app-capable`), so the button is never shown.
+- **iPhone Safari (iOS 17, 18 and 26):** there's no Fullscreen API for page elements (WebKit bug 206854; only `<video>` can go fullscreen).
+  - Tapping ⛶ uses a best-effort "pseudo fullscreen": a scroll nudge, and the button hides. It shows a small one-time hint, "Add to Home Screen for true fullscreen" (tap to dismiss; remembered in `srroute_fshint`).
+  - Safari's own bars can't be removed by a page. Use Share → Add to Home Screen, or Safari's ᴀA → Hide Toolbar.
+- Code: `js/fullscreen.js`. Test: `tools/test-fullscreen.cjs`.
+
 ## URL parameters
 | Param | Meaning |
 |---|---|
@@ -92,6 +102,7 @@ Settings are stored under the `srroute_*` localStorage keys, separate from siner
 `bash tools/run-tests.sh`. This needs `google-chrome` and `puppeteer-core`; `CHROME` and `PPTR` override their paths (see `tools/lib.cjs`).
 | Test | Checks |
 |---|---|
+| `tools/test-fullscreen.cjs` | ⛶ button: visible in landscape without overlapping the HUD; a tap requests fullscreen and hides it; portrait calls exitFullscreen; an external exit brings the button back; standalone hides it; on an iPhone-like browser (no API) a tap gives pseudo fullscreen and the one-time hint |
 | `tools/test-gearbox.cjs` | Node physics (`tools/gearbox-sim.mjs`): every vehicle × arcade/normal × stock/10000 hp held at full throttle for 65 s on the flat and on 6% and 10% climbs reaches top gear with no downshift after it. Braking steps down to 1st. At 20 hp there is no hunting. Manual checks: no auto shifts, the limiter, the over-rev guard, and R. In the browser: the GEARBOX row is saved and persists, touch swipes on the pedal shift while the throttle stays held, slow drift does not shift, the X/Z keys work, and auto mode is unchanged |
 | `tools/test-road.cjs` | 60 km at 1 m steps: position/heading continuity, grade ≤ 12% over 20 m, curve radius, lane surface = road, project round-trip, tunnels + bridges exist, chunk disposal, determinism (same seed equal, other seed differs) |
 | `tools/test-drive.cjs` | autopilot drives 50+ km (fast fixed-step sim, then rendered): never off the road, no stuck, no crash, all 5 biomes visited |

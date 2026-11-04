@@ -1,7 +1,7 @@
 {
- "name": "SineHighway V0.2",
- "short_name": "SineHighway V0.2",
- "description": "SineHighway V0.2: an endless, curvy Route-66-style comic drive through prairie, red-rock desert, pine forest, snowy mountains and coast",
+ "name": "SineHighway V0.3-dev",
+ "short_name": "SineHighway V0.3-dev",
+ "description": "SineHighway V0.3-dev: an endless, curvy Route-66-style comic drive through prairie, red-rock desert, pine forest, snowy mountains and coast",
  "id": "./?app=sinehighway",
  "start_url": "./?app=sinehighway",
  "scope": "./",

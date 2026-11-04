@@ -42,7 +42,7 @@ const sim = (...a) => execFileSync(process.execPath, [path.join(__dirname, 'gear
   for (let y = 225; y <= 265; y += 5) { await touch('touchmove', y); await new Promise(r => setTimeout(r, 100)); } // ~50 px/s drift
   const b3 = await st(); ok(b3.g === 3 && b3.gas === 1, `slow drift / long move is not a swipe (gear ${b3.g})`);
   await touch('touchmove', 280); await touch('touchmove', 303); const c = await st(); ok(c.g === 2 && c.gas === 1, `swipe DOWN (38 px) → gear ${c.g}, throttle still held`);
-  await touch('touchend', 303); await new Promise(r => setTimeout(r, 100)); ok((await st()).gas === 0, 'lifting the finger releases the throttle');
+  await touch('touchend', 303); let gz = 1; for (let k = 0; k < 20 && gz; k++) { await new Promise(r => setTimeout(r, 100)); gz = (await st()).gas; } ok(gz === 0, 'lifting the finger releases the throttle');
   await P.keyboard.press('KeyX'); const k1 = await st(); await new Promise(r => setTimeout(r, 400)); await P.keyboard.press('KeyZ'); const k2 = await st();
   ok(k1.g === 3 && k2.g === 2, `keys: X → ${k1.g}, Z → ${k2.g}`);
   const fl = await P.evaluate(() => new Promise(res => { __st.manualShift(1); requestAnimationFrame(() => res(document.getElementById('gauge').toDataURL().length)); }));

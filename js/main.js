@@ -10,6 +10,7 @@ import { createEngineAudio } from './engine-audio.js'; // engine sound plugin ho
 import { createSoundEditor } from './sound-editor.js';
 import * as PWR from './power.js';
 import { openPowerPanel } from './power-ui.js';
+import { initFullscreen } from './fullscreen.js';
 import { createUiEditor } from './ui-editor.js'; // SineRally UI: HUD layout editor (☰ → EDIT UI, key U)
 import { U, objMat, puffMat, decalMat, postMat, precipMat } from './shaders.js';
 import { rockVariants } from './models.js';
@@ -698,7 +699,8 @@ function simFast(sec) {
 requestAnimationFrame(frame);
 // release identity from js/version.js (title, menu tag, versions link)
 document.title = GAME_NAME; { const t = document.getElementById('verTag'); if (t) t.textContent = 'V' + GAME_VERSION; const v = document.getElementById('versionsLink'); if (v) v.href = VERSIONS_URL; }
-window.__st = { version: GAME_NAME, renderer, U, get gearbox() { return gbMode; }, setGearbox, manualShift, get inp() { return inp; }, get msgText() { return $("msg") ? $("msg").textContent : ""; }, PWR, get gripTest() { return gripTest; }, set gripTest(v) { gripTest = v; }, get vSub() { return vSub; }, openPower: () => { openMenu(true, 'vehicle'); vSub = 'power'; vehRow(); }, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
+const FS = initFullscreen({ btn: $('tFull'), hint: $('fsHint') });
+window.__st = { FS, version: GAME_NAME, renderer, U, get gearbox() { return gbMode; }, setGearbox, manualShift, get inp() { return inp; }, get msgText() { return $("msg") ? $("msg").textContent : ""; }, PWR, get gripTest() { return gripTest; }, set gripTest(v) { gripTest = v; }, get vSub() { return vSub; }, openPower: () => { openMenu(true, 'vehicle'); vSub = 'power'; vehRow(); }, msg, get msgT() { return msgT ? Math.max(0, msgT - performance.now()) / 1000 : 0; }, get veh() { return veh; }, get state() { return veh; }, rig, T, PH, bus, world, hpMap, evLog, stats, inp, W, audio, editor, TEL, scene,
   get q() { return qName; }, setQ(q) { qName = q; applyQuality(); }, get x() { return veh.p.x; }, get z() { return veh.p.z; }, get y() { return veh.p.y; },
   place(x, z, yaw = 0) { spawn(x, z, yaw); }, teleport(x, z, yaw = 0) { spawn(x, z, yaw); updateWorld(true); }, toBiome(name, yaw = 0) { const p = T.findBiome(name, veh.p.x, veh.p.z); if (p) this.teleport(p.x, p.z, yaw); return p; },
   toS(s, d = 3) { const p = lanePoint(Math.max(0, s), d); spawn(p.x, p.z, p.yaw); camPos.set(veh.p.x - Math.sin(p.yaw) * 10, veh.p.y + 4, veh.p.z - Math.cos(p.yaw) * 10); odoX = veh.p.x; odoZ = veh.p.z; rebase(); odoX = veh.p.x; odoZ = veh.p.z; sCur = Math.max(0, W.project(veh.p.x, veh.p.z).s); W.setFocus(sCur); props.update(sCur); updateWorld(true); return p; },
