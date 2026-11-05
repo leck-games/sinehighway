@@ -290,7 +290,7 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
     }
   }
   // ---------- rendering ----------
-  let near = [], imp = null, lastBuild = { x: 1e9, z: 1e9, dx: 0, dz: 0, t: -1 }, nearCount = 0, impCount = 0, pending = false, time = 0;
+  let near = [], imp = null, lastBuild = { x: 1e9, z: 1e9, dx: 0, dz: 0, t: -1 }, nearCount = 0, impCount = 0, pending = false, skipped = 0, time = 0;
   const NMAX = [1800, 1800, 500, 1100, 300, 700], IMAX = 14000;
   function attrs(g, max, withSp) {
     const a = { iPos: new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4), iPar: new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4), iCol: new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3) };
@@ -319,13 +319,13 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
     const c = BASECOL[t.sp]; a.iCol.array[i * 3] = t.tint[0] * c[0]; a.iCol.array[i * 3 + 1] = t.tint[1] * c[1]; a.iCol.array[i * 3 + 2] = t.tint[2] * c[2];
   }
   function rebuild(cx, cz, dx, dz, budgetMs) {
-    const t0 = performance.now(); pending = false;
+    const t0 = performance.now(); pending = false; skipped = 0;
     for (const n of near) n.n = 0; let ni = 0;
     const R = farR, i0 = Math.floor((cx - R) / TC), i1 = Math.floor((cx + R) / TC), j0 = Math.floor((cz - R) / TC), j1 = Math.floor((cz + R) / TC), R2 = R * R, N2 = nearR * nearR;
     for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
       const wx = (i + 0.5) * TC - cx, wz = (j + 0.5) * TC - cz, d2 = wx * wx + wz * wz; if (d2 > R2) continue;
       const id = KEY(i + OI, j + OJ); let t;
-      if (cells.has(id)) t = cells.get(id); else { if (performance.now() - t0 > budgetMs && d2 > 900) { pending = true; continue; } t = evalCell(i, j); }
+      if (cells.has(id)) t = cells.get(id); else { if (performance.now() - t0 > budgetMs && d2 > 900) { pending = true; skipped++; continue; } t = evalCell(i, j); }
       if (!live(t)) continue;
       const d = Math.sqrt(d2); if (d > 25 && (wx * dx + wz * dz) < -0.42 * d) continue; // behind camera
       const b = burn.get(t.id) || 0, sp = b >= 1 ? SP.DEAD : t.sp;
@@ -348,7 +348,7 @@ export function createTrees({ fuelAt, heightAt, emit = () => {}, nearR = 110, fa
   function burningList() { const out = []; for (const id of burning) { const t = find(id); if (t) out.push({ id, x: t.x, y: t.y, z: t.z, h: shH(t) * t.s, b: burn.get(id) || 0, sp: t.sp }); } return out; }
   return {
     queryTrees, damageTree, removeTree, setTreeHP, getTree, igniteTree, burningList, setup, update, shift,
-    stats: () => ({ near: nearCount, impostors: impCount, cached: cells.size, removed: removed.size, burning: burning.size, damaged: hp.size }),
+    stats: () => ({ pending, skipped, near: nearCount, impostors: impCount, cached: cells.size, removed: removed.size, burning: burning.size, damaged: hp.size }),
     save: () => ({ removed: [...removed], hp: [...hp], burn: [...burn].filter(([, b]) => b >= 1).map(([id]) => id) }),
     reset() { hp.clear(); removed.clear(); burn.clear(); burning.clear(); leanDir.clear(); dirty = true; },
     load(s) { if (!s) return; (s.removed || []).forEach(id => removed.add(id)); (s.hp || []).forEach(([id, v]) => hp.set(id, v)); (s.burn || []).forEach(id => burn.set(id, 1)); dirty = true; },

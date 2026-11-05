@@ -22,6 +22,9 @@ export function createFords(scene) {
       const O = W.origin();
       for (const [f, m] of live) { if (!keep.has(f)) { scene.remove(m); m.geometry.dispose(); live.delete(f); continue; } m.position.set(m.userData.o.x - O.x, 0, m.userData.o.z - O.z); }
     },
+    // a throw-away 1-triangle mesh with the ford material, so the game can compile its shader at load
+    // (otherwise the first ford/coastal wash in view compiles it mid-drive: a 0.3 s hitch headless, a visible freeze on iPhone)
+    warmMesh() { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3)); g.setAttribute('dep', new THREE.BufferAttribute(new Float32Array(3), 1)); const m = new THREE.Mesh(g, mat); m.frustumCulled = false; return m; },
     get count() { return live.size; },
   };
 }

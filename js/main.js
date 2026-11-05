@@ -628,6 +628,18 @@ function rebase() {
   return true;
 }
 applyQuality(); updateWorld(true);
+// shader prewarm: compile every material once at load (hidden rain/lightning/shadow meshes and lazily-built ford water included),
+// so crossing into a new biome at 300+ km/h never stalls a frame on a first-sight shader compile (iPhone Safari: up to ~1 s).
+function prewarm() {
+  const hid = []; scene.traverse(o => { if (!o.visible) { hid.push(o); o.visible = true; } });
+  const tmp = T.fords && T.fords.warmMesh ? [T.fords.warmMesh()] : []; for (const m of tmp) scene.add(m);
+  const t = performance.now(); const fc = []; scene.traverse(o => { if (o.frustumCulled) { fc.push(o); o.frustumCulled = false; } });
+  // compile() alone defers the GL link to the first draw, so draw once off-screen (into the post target, overwritten next frame)
+  try { const tgt = QS.has('nopost') ? null : rt; renderer.setRenderTarget(tgt); renderer.compile(scene, camera); renderer.render(scene, camera); renderer.setRenderTarget(null); } catch (e) { console.warn('prewarm', e); }
+  stats.prewarmMs = performance.now() - t; stats.prewarmPrograms = renderer.info.programs.length;
+  for (const m of tmp) { scene.remove(m); m.geometry.dispose(); } for (const o of hid) o.visible = false; for (const o of fc) o.frustumCulled = true;
+}
+prewarm();
 function frame(now) {
   requestAnimationFrame(frame); const t0 = performance.now(); let dt = Math.min(0.1, (now - last) / 1000); last = now; tFrame += dt; renderer.info.reset();
   dynRes(dt);
