@@ -172,6 +172,7 @@ export function createFire({ fuelAt, heightAt, rainAt, wetAt, wind, trees, emit 
     ignite, update, setup, stateAt,
     stats: () => ({ burning: active.length, burntCells: burntSet.size, smoulder: smoulder.length, ...counts }),
     burningCells: () => active.map(s => ({ x: (sgi[s] + 0.5) * FIRE_CELL, z: (sgj[s] + 0.5) * FIRE_CELL, heat: heat[s] })),
+    douse(x, z, r = 5) { let n = 0; active = active.filter(s => { const dx = (sgi[s] + 0.5) * FIRE_CELL - x, dz = (sgj[s] + 0.5) * FIRE_CELL - z; if (dx * dx + dz * dz > r * r) return true; heat[s] = 0; burnt[s] = 1; burntSet.add(gkey(sgi[s], sgj[s])); n++; return false; }); return n; },
     extinguishAll() { for (const s of active) { heat[s] = 0; burnt[s] = 1; burntSet.add(gkey(sgi[s], sgj[s])); } active = []; },
     save: () => [...burntSet], load(a) { (a || []).forEach(k => burntSet.add(k)); gi0 = null; sgi.fill(-1e9); },
     clearBurnt() { burntSet.clear(); gi0 = null; sgi.fill(-1e9); },

@@ -362,6 +362,7 @@ function gauge() {
   const warm = veh.heat.temp >= H.ambient + 0.6 * (H.hot - H.ambient); TEL.tempShown = warm; // auto-hide: the bar only appears once the engine is warm
   if (warm) { const bx = cx - 30, by = cy - 6, bw = 60; gc.fillStyle = '#111'; gc.fillRect(bx - 2, by - 2, bw + 4, 9);
   gc.fillStyle = veh.heat.temp >= H.overheat ? '#ff3a1a' : hot ? '#ffb020' : '#4fb8ff'; gc.fillRect(bx, by, bw * tk, 5); }
+  if (warm && wst.depth > 0 && !hot) ink('STEAM', cx, 16, 'italic 900 13px "Arial Black",system-ui', 3, '#bfe8ff');
   if (hot) ink(veh.heat.cut ? 'ENGINE CUT' : veh.heat.over ? 'OVERHEAT' : 'HOT', cx, 16, 'italic 900 13px "Arial Black",system-ui', 3, veh.heat.over ? '#ff5030' : '#ffd23c');
 }
 
@@ -391,6 +392,28 @@ function popText(txt, x, y, z, col) {
   requestAnimationFrame(() => { d.style.transform = 'translate(-50%,-180%) scale(1.15)'; d.style.opacity = 0; }); setTimeout(() => d.remove(), 950);
 }
 function burst(x, y, z, n, col, spd = 4) { for (let k = 0; k < n; k++) { const a = Math.random() * 6.28; puff(x + Math.cos(a), y + Math.random() * 3, z + Math.sin(a), Math.cos(a) * spd + veh.v.x * 0.2, 2 + Math.random() * 3, Math.sin(a) * spd + veh.v.z * 0.2, 1 + Math.random(), 0.8, k % 3 ? col : [0.5, 0.36, 0.22]); } }
+// ---------- water cools the engine (sea/rivers/fords): splash < wading < engine under water; rain a little ----------
+// first-order pull towards ambient: dT/dt = -k (T - ambient). k per second: splash 0.25..0.5 (more with speed), wading (>=0.3 m) 1.5,
+// engine submerged: straight to ambient. Rain adds 0.03 * rain. Steam/hiss: white puffs from the engine bay (ring-buffer puffs only).
+const WCOOL = { splash: 0.25, splashSpd: 0.02, wade: 1.5, wadeD: 0.3, rain: 0.03 };
+const wst = { depth: 0, sub: false, k: 0, tier: '', steamT: 0, smokeT: 0, splT: 0, hissed: false, rain: 0 };
+function waterCool(dt, fx = true) {
+  const H = veh.P.heat || PH.HEAT, h = veh.heat, w = T.waterAt(veh.p.x, veh.p.z), ep = PH.enginePos(veh), sp = Math.hypot(veh.v.x, veh.v.z);
+  const dep = w.depth > 0 && veh.p.y - 1.6 < w.level ? w.depth : 0, sub = dep > 0 && w.level > ep[1];
+  let k = 0, tier = ''; wst.rain = T.rainAt ? T.rainAt(veh.p.x, veh.p.z) : 0;
+  if (sub) tier = 'submerged'; else if (dep >= WCOOL.wadeD) { k = WCOOL.wade; tier = 'wading'; } else if (dep > 0.01) { k = WCOOL.splash * (1 + WCOOL.splashSpd * sp * 3.6 / 10); tier = 'splash'; }
+  k += WCOOL.rain * wst.rain;
+  const hot0 = h.temp; if (sub) h.temp = Math.min(h.temp, H.ambient); else h.temp = H.ambient + (h.temp - H.ambient) * Math.exp(-k * dt);
+  wst.depth = dep; wst.sub = sub; wst.k = sub ? Infinity : k; wst.tier = tier;
+  if (dep > 0) { if (h.temp < H.overheat - 8) { h.over = false; } if (h.temp < H.max - 15) h.cut = false; const n = T.douse(veh.p.x, veh.p.z, 7); if (n && !wst.hissed) msg('FIRE OUT'); }
+  // fx (skipped in simFast): steam while a warm engine meets water, dark smoke while overheating on dry land, wheel spray
+  if (!fx) return;
+  if (dep > 0 && hot0 > H.ambient + 25) { if (!wst.hissed) { wst.hissed = true; for (let i = 0; i < 8; i++) puff(ep[0], w.level + 0.3, ep[2], (Math.random() - .5) * 3, 3 + Math.random() * 2, (Math.random() - .5) * 3, 1.6, 1.4, [.97, .98, 1]); }
+    if ((wst.steamT -= dt) <= 0) { wst.steamT = 0.08 + 0.25 * (1 - Math.min(1, (hot0 - H.ambient) / 80)); puff(ep[0] + (Math.random() - .5), Math.max(w.level, ep[1]) + 0.4, ep[2] + (Math.random() - .5), (Math.random() - .5), 2.5 + Math.random() * 1.5, (Math.random() - .5), 1.1 + Math.random() * 0.6, 1.2, [.95, .97, 1]); } }
+  else if (dep <= 0) wst.hissed = false;
+  if (dep <= 0 && h.over && (wst.smokeT -= dt) <= 0) { wst.smokeT = 0.18; puff(ep[0], ep[1] + 0.6, ep[2], (Math.random() - .5), 2 + Math.random(), (Math.random() - .5), 1.2, 1.3, [0.3, 0.28, 0.26]); }
+  if (dep > 0.02 && sp > 3 && (wst.splT -= dt) <= 0) { wst.splT = Math.max(0.05, 0.6 / sp); for (let i = 0; i < 2; i++) { const a = Math.random() * 6.28; puff(veh.p.x + Math.cos(a) * 1.2, w.level + 0.2, veh.p.z + Math.sin(a) * 1.2, Math.cos(a) * 2 + veh.v.x * 0.2, 1.5 + Math.random() * 2, Math.sin(a) * 2 + veh.v.z * 0.2, 0.9, 0.6, [.82, .93, 1]); } }
+}
 // physics -> terrain: engine heat ignites dry grass under the car; tree contacts already went through world.damageTree
 bus.on('engine:hot', d => { const p = d.position; T.engineHot({ position: { x: p[0], z: p[2] }, intensity: d.intensity }); });
 bus.on('engine:overheat', d => { const p = d.position; T.engineOverheat({ position: { x: p[0], z: p[2] }, temp: d.temp }); msg('OVERHEAT!'); for (let k = 0; k < 10; k++) puff(p[0], p[1] + 0.5, p[2], (Math.random() - .5) * 2, 2 + Math.random() * 2, (Math.random() - .5) * 2, 1.4, 1.2, [0.35, 0.33, 0.32]); });
@@ -614,7 +637,7 @@ function frame(now) {
   acc += dt; let steps = 0; const tp = performance.now();
   while (acc >= STEP && steps < 12) { simT += STEP; T.setRef(veh.p.y); const g0 = inp.gas; inp.gas = PWR.throttle(veh, STEP, g0); rig.step(inp, STEP); inp.gas = g0; pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); tunnelWalls(veh); acc -= STEP; steps++; }
   if (steps === 12) acc = 0;
-  stats.physMs = performance.now() - tp;
+  stats.physMs = performance.now() - tp; waterCool(steps * STEP);
   rebase();
   { const d = Math.hypot(veh.p.x - odoX, veh.p.z - odoZ); if (d < 50) odo += d; odoX = veh.p.x; odoZ = veh.p.z; } // odometer (teleports / resets do not count)
   sCur = Math.max(0, W.project(veh.p.x, veh.p.z).s); if (sCur > sMax) sMax = sCur; W.setFocus(sCur); props.update(sCur);
@@ -685,6 +708,7 @@ function simFast(sec) {
   for (let i = 0; i < n; i++) {
     simT += STEP; if (autoOn) autopilot(STEP); T.setRef(veh.p.y); const g0 = inp.gas; inp.gas = PWR.throttle(veh, STEP, g0); rig.step(inp, STEP); inp.gas = g0; pwSpool = PWR.tick(veh, STEP, inp.gas); collideRocks(veh); tunnelWalls(veh);
     if (i % 12) continue; // 10 Hz bookkeeping, like a slow frame
+    waterCool(12 * STEP, false);
     rebase(); { const d = Math.hypot(veh.p.x - odoX, veh.p.z - odoZ); if (d < 50) odo += d; odoX = veh.p.x; odoZ = veh.p.z; }
     const pr = W.project(veh.p.x, veh.p.z); sCur = Math.max(0, pr.s); if (sCur > sMax) sMax = sCur; W.setFocus(sCur); props.update(sCur); updateWorld(false);
     const ad = Math.abs(pr.d); r.maxD = Math.max(r.maxD, ad); if (ad > W.ROAD_HW + 0.5) r.offroad++; r.maxLocal = Math.max(r.maxLocal, Math.abs(veh.p.x), Math.abs(veh.p.z));
@@ -704,7 +728,7 @@ window.__st = { FS, version: GAME_NAME, renderer, U, get gearbox() { return gbMo
   get q() { return qName; }, setQ(q) { qName = q; applyQuality(); }, get x() { return veh.p.x; }, get z() { return veh.p.z; }, get y() { return veh.p.y; },
   place(x, z, yaw = 0) { spawn(x, z, yaw); }, teleport(x, z, yaw = 0) { spawn(x, z, yaw); updateWorld(true); }, toBiome(name, yaw = 0) { const p = T.findBiome(name, veh.p.x, veh.p.z); if (p) this.teleport(p.x, p.z, yaw); return p; },
   toS(s, d = 3) { const p = lanePoint(Math.max(0, s), d); spawn(p.x, p.z, p.yaw); camPos.set(veh.p.x - Math.sin(p.yaw) * 10, veh.p.y + 4, veh.p.z - Math.cos(p.yaw) * 10); odoX = veh.p.x; odoZ = veh.p.z; rebase(); odoX = veh.p.x; odoZ = veh.p.z; sCur = Math.max(0, W.project(veh.p.x, veh.p.z).s); W.setFocus(sCur); props.update(sCur); updateWorld(true); return p; },
-  lanePoint, rebase, simFast, get rebases() { return rebases; }, get origin() { return W.origin(); }, props,
+  lanePoint, rebase, simFast, waterCool, get water() { return wst; }, WCOOL, get rebases() { return rebases; }, get origin() { return W.origin(); }, props,
   get route() { const g = W.segmentAt(sCur), n = W.nextBiome(sCur), pr = W.project(veh.p.x, veh.p.z); return { s: sCur, sMax, km: odo / 1000, d: pr.d, biome: g.name, title: g.title, next: n.name, nextS: n.s, weights: Array.from(W.biomeAtS(sCur)) }; },
   get auto() { return autoOn; }, set auto(v) { autoOn = !!v; }, setAuto, get ap() { return AP; }, set odo(v) { odo = v; },
   setVehicle, useVehicle, setAttachments, get vName() { return vDef.id; }, openMenu, get wx() { return wx; }, setWx(m, snap = true) { wxMode = m; applyWx(); if (snap) T.snapWeather(); }, set tod(v) { tod = v; timeMode = 'Fixed'; applyTime(); },

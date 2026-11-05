@@ -203,6 +203,24 @@ export function waterMat({ far = false, uNear = null } = {}) {
         gl_FragColor = vec4(fogMix(c, vW, 1.0), ncode(vec3(0.,1.,0.)) + foam * 0.04);
       }` });
 }
+// ford / wash sheet: real vertex heights, per-vertex depth (dep < 0 = no water there); shallow tint, foam rim, ripples
+export function fordMat() {
+  return new THREE.ShaderMaterial({ uniforms: U,
+    vertexShader: `uniform float uTime; attribute float dep; varying vec3 vW; varying float vD;
+      void main(){ vec4 w = modelMatrix * vec4(position,1.); vD = dep; w.y += 0.03 * sin(w.x*0.3 + w.z*0.2 + uTime*2.); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+    fragmentShader: COMIC + `varying vec3 vW; varying float vD;
+      void main(){
+        if (vD < 0.015) discard;
+        vec3 c = mix(vec3(.55,.86,.9), vec3(.22,.6,.82), smoothstep(0.1, 1.2, vD));
+        float rip = step(0.86, fract((vW.x+uOrg.x)*0.11 + 0.6*sin((vW.z+uOrg.y)*0.09) - uTime*0.4));
+        float foam = max(1. - smoothstep(0.03, 0.12, vD), rip * 0.7);
+        vec3 N = normalize(vec3(0.12*sin((vW.x+uOrg.x)*0.3 + uTime*2.), 1., 0.12*cos((vW.z+uOrg.y)*0.25 - uTime*1.7)));
+        vec3 V = normalize(cameraPosition - vW); float sp = dot(reflect(-uSun, N), V);
+        c = mix(c, vec3(1.), step(0.98, sp)); c = mix(c, vec3(.97,1.,1.), foam);
+        c *= (uLight + uFlash) * (1. - 0.35 * cloudShadow(vW)); c += uHeadK * headLight(c, vec3(0.,1.,0.), vW);
+        gl_FragColor = vec4(fogMix(c, vW, 1.0), ncode(vec3(0.,1.,0.)) + foam * 0.04);
+      }` });
+}
 export function roadMat(map, { offset = -2, col = 0x9a9aa2 } = {}) {
   // HIGH/ULTRA (uHD > 0): hi-res colour map + normal/roughness map (rg = normal xy, b = roughness), v scaled by uVS so the
   // detailed tile covers more road; bump light + stepped specular are added on top of the comic bands (geometric N keeps the ink edges clean)

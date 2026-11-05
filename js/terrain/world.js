@@ -56,10 +56,10 @@ function nextBiome_(prev) {
 }
 function pushSeg() {
   const k = SEG.length;
-  if (!k) { SEG.push({ s0: -1e7, s1: 3200, b: nextBiome_(-1), side: 1, m: 1600, k: 0 }); genFeat(SEG[0]); return; }
+  if (!k) { SEG.push({ s0: -1e7, s1: 3200, b: nextBiome_(-1), side: 1, m: 1600, k: 0 }); genFeat(SEG[0]); genFord(SEG[0]); return; }
   const p = SEG[k - 1], len = 3000 + 3000 * h32(k, 7, 1), b = nextBiome_(p.b);
   const sg = { s0: p.s1, s1: p.s1 + len, b, side: h32(k, 8, 2) < 0.5 ? -1 : 1, m: p.s1 + len / 2, k };
-  SEG.push(sg); genFeat(sg);
+  SEG.push(sg); genFeat(sg); genFord(sg);
 }
 function ensureSeg(s) { while (!SEG.length || SEG[SEG.length - 1].s1 < s + 3000) pushSeg(); }
 function segIdx(s) { ensureSeg(s); let lo = 0, hi = SEG.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (SEG[m].s0 <= s) lo = m; else hi = m - 1; } return lo; }
@@ -101,6 +101,41 @@ function genFeat(g) {
       FEAT.push(f); s += (f.type === 'tun' ? 2 * f.hl : 150) + 500 + 700 * h32(g.k, n, 14);
     } else s += 500 + 500 * r2;
   }
+}
+// shallow water over the road (fords in prairie/forest, tidal wash in coast): own hash stream, so tunnels/bridges stay put.
+// Never within 260 m of a tunnel/bridge; the road itself is untouched (stays drivable), the water sheet sits on top of it.
+const FORD = [];  // {c, w, D, lat, L, k}
+function genFord(g) {
+  if (g.b !== BIOME.PRAIRIE && g.b !== BIOME.FOREST && g.b !== BIOME.COAST) return;
+  const lo = Math.max(1200, g.s0 + BLEND + 300), hi = g.s1 - BLEND - 300; let s = lo + 300 * h32(g.k, 0, 21), n = 0;
+  while (s < hi) {
+    const r = h32(g.k, n, 22), r2 = h32(g.k, n, 23); n++;
+    if (r < (g.b === BIOME.COAST ? 0.55 : 0.6)) {
+      let clear = true; for (const f of FEAT) if (A(f.c - s) < 260 + (f.hl || 0)) { clear = false; break; }
+      if (clear) FORD.push({ c: s, w: 8 + 5 * r2, D: 0.32 + 0.16 * h32(g.k, n, 24), lat: g.b === BIOME.COAST ? 55 : 40, L: null, k: FORD.length, coast: g.b === BIOME.COAST });
+    }
+    s += 1300 + 1300 * r2;
+  }
+}
+function fordExt(f) { if (f.L === null) f.L = mn(yProf(f.c - f.w * 0.5), yProf(f.c), yProf(f.c + f.w * 0.5)) + f.D; return f; }
+export function fordsIn(s0, s1) { segIdx(s1 + 500); return FORD.filter(f => f.c + f.w > s0 && f.c - f.w < s1).map(fordExt); }
+// water surface of a ford at route coords (s, d): falls 1 m at the edges so the sheet meets the ground
+function fordLevel(f, s, d) { const u = A(s - f.c), ad = A(d); if (u > f.w || ad > f.lat) return -1e9; const k = (1 - sst(0.5 * f.w, f.w, u)) * (1 - sst(0.55 * f.lat, f.lat, ad)); return f.L - 1.2 * (1 - k); }
+export const FORD_MAXD = 1.6;  // deeper than this below a ford's sheet = embankment/hollow: no water drawn there
+export const WTR = { level: -1e9, depth: 0, ford: null, sea: false };
+const SOW = {};
+export function fordSurface(f, x, z) { // for the renderer: [level, depth] at local (x, z)
+  const o = sample(x, z, SOW); if (o.deck > -1e8 || o.tun > -1e8) return [f.L - 1.2, -1]; const lv = fordLevel(f, o.s, o.d), dep = lv - o.h; return [lv, dep > FORD_MAXD ? -1 : dep];
+}
+export function waterAt(x, z, w = WTR) { // water surface + depth above the ground at local (x, z): sea/rivers (WATER) or a ford
+  const o = sample(x, z, SOW); w.level = -1e9; w.depth = 0; w.ford = null; w.sea = false;
+  if (o.tun > -1e8 && REFY < o.tun + o.tH + 1.5) return w;     // in a tunnel: dry
+  const g = o.deck > o.h ? o.deck : o.h; if (o.deck > -1e8 && o.deck >= o.h) return w; // bridge deck: dry
+  if (o.h < WATER) { w.level = WATER; w.depth = WATER - g; w.sea = true; }
+  segIdx(o.s + 300);
+  for (let i = FORD.length - 1; i >= 0; i--) { const f = FORD[i]; if (f.c < o.s - 200) break; if (A(f.c - o.s) > f.w) continue;
+    fordExt(f); const lv = fordLevel(f, o.s, o.d), dep = lv - g; if (dep > 0 && dep <= FORD_MAXD && dep > w.depth) { w.level = lv; w.depth = dep; w.ford = f; w.sea = false; } }
+  return w;
 }
 function featExt(f) { // bridge extents (lazy: needs the road profile)
   if (f.type !== 'br' || f.s0 !== undefined) return f;

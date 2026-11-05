@@ -7,6 +7,7 @@ import { createGround } from './ground.js';
 import { createTrees, SPECIES } from './trees.js';
 import { createFire, FIRE_CELL } from './fire.js';
 import { createWeather } from './weather.js';
+import { createFords } from './fords.js';
 
 const sst = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const BASE_DRY = [0.84, 0.95, 0.24, 0.38, 0.5]; // prairie, desert, forest, mountains, coast
@@ -61,9 +62,9 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
   if (persistKey) try { const s = JSON.parse(localStorage.getItem(persistKey) || 'null'); if (s) { trees.load(s.trees); fire.load(s.burnt); } } catch (e) { }
   let saveT = 0;
   // ---- render ----
-  let ground = null, scene = null, meshes = [];
+  let ground = null, scene = null, meshes = [], fords = null;
   function setup(sc) {
-    scene = sc; ground = createGround(sc, { small, grassCount, nearN, farN }); weather.baseFar = ground.farDist;
+    scene = sc; ground = createGround(sc, { small, grassCount, nearN, farN }); weather.baseFar = ground.farDist; fords = createFords(sc);
     meshes = [...ground.meshes, ...trees.setup(sc), ...fire.setup(sc), ...weather.setup(sc)];
     return meshes;
   }
@@ -73,6 +74,7 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
     dt = Math.min(0.1, Math.max(0, dt)); U.uTime.value += dt; if (viewHeight) viewH = viewHeight;
     const cp = camera ? camera.position : focus, fp = focus || cp;
     if (ground) ground.update(fp.x, fp.z);
+    if (fords) fords.update(W.project(fp.x, fp.z).s);
     weather.update(dt, cp, camera);
     if (camera) camera.getWorldDirection(camDir); else camDir.set(0, 0, -1);
     trees.update(dt, cp, camDir, weather.rainAt);
@@ -101,7 +103,7 @@ export function createTerrain({ bus = null, small = false, grassCount, persistKe
     origin: W.origin,
     queryTrees: trees.queryTrees, damageTree: trees.damageTree, removeTree: trees.removeTree, setTreeHP: trees.setTreeHP, getTree: trees.getTree, igniteTree: trees.igniteTree, resetTrees: trees.reset,
     ignite: (x, z, o) => fire.ignite(x, z, o), fireAt: fire.stateAt, burningCells: fire.burningCells, extinguishAll: fire.extinguishAll, clearBurnt: fire.clearBurnt,
-    engineHot, engineOverheat,
+    engineHot, engineOverheat, douse: (x, z, r) => fire.douse(x, z, r), waterAt: W.waterAt, get fords() { return fords; },
     setWind: weather.setWind, wind: weather.wind, setRain: weather.setRain, setTimeOfDay: weather.setTimeOfDay, setLightning: weather.setLightning, strike: weather.strike,
     rainAt: weather.rainAt, coverageAt: weather.coverageAt, wetAt: weather.wetAt, snapWeather: weather.snapBias,
     setup, update, on, off, uniforms: U, FIRE_CELL,
